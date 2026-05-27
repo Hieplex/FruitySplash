@@ -1,0 +1,166 @@
+import { describe, expect, it } from 'vitest';
+import {
+  addBoosters,
+  addCoins,
+  addLives,
+  consumeBooster,
+  consumeLife,
+  createDefaultPlayerState,
+  sanitizePlayerState,
+  spendCoins,
+} from '@/state/player-helpers';
+
+describe('player economy helpers', () => {
+  it('starts with an empty wallet, full lives, and booster inventory slots', () => {
+    expect(createDefaultPlayerState()).toMatchObject({
+      wallet: { coins: 0 },
+      lives: {
+        current: 5,
+        max: 5,
+      },
+      inventory: {
+        boosters: {
+          bomb: 5,
+          hammer: 5,
+        },
+      },
+    });
+  });
+
+  it('adds and spends coins without allowing negative balances', () => {
+    const player = addCoins(createDefaultPlayerState(), 125);
+
+    expect(spendCoins(player, 75)).toMatchObject({
+      spent: true,
+      state: {
+        wallet: { coins: 50 },
+      },
+    });
+
+    expect(spendCoins(player, 200)).toMatchObject({
+      spent: false,
+      state: player,
+    });
+  });
+
+  it('caps lives at max and reports failed life consumption', () => {
+    const emptyLives = {
+      ...createDefaultPlayerState(),
+      lives: {
+        current: 0,
+        max: 5,
+      },
+    };
+
+    expect(addLives(emptyLives, 10).lives.current).toBe(5);
+    expect(consumeLife(emptyLives)).toMatchObject({ consumed: false, state: emptyLives });
+    expect(consumeLife(addLives(emptyLives, 1))).toMatchObject({
+      consumed: true,
+      state: {
+        lives: {
+          current: 0,
+          max: 5,
+        },
+      },
+    });
+  });
+
+  it('adds and consumes boosters by inventory key', () => {
+    const player = addBoosters(createDefaultPlayerState(), 'bomb', 2);
+
+    expect(consumeBooster(player, 'bomb')).toMatchObject({
+      consumed: true,
+      state: {
+        inventory: {
+          boosters: {
+            bomb: 6,
+            hammer: 5,
+          },
+        },
+      },
+    });
+
+    expect(
+      consumeBooster(
+        {
+          ...createDefaultPlayerState(),
+          inventory: {
+            boosters: {
+              bomb: 0,
+              hammer: 5,
+            },
+          },
+        },
+        'bomb',
+      ),
+    ).toMatchObject({
+      consumed: false,
+    });
+  });
+
+  it('sanitizes legacy progress into a player state with economy defaults', () => {
+    expect(
+      sanitizePlayerState({
+        unlockedLevel: 3.8,
+        starsByLevel: { 1: 3 },
+        bestScoreByLevel: { 1: 1800 },
+        soundEnabled: false,
+      }),
+    ).toEqual({
+      unlockedLevel: 3,
+      starsByLevel: { 1: 3 },
+      bestScoreByLevel: { 1: 1800 },
+      soundEnabled: false,
+      wallet: {
+        coins: 0,
+      },
+      inventory: {
+        boosters: {
+          bomb: 5,
+          hammer: 5,
+        },
+      },
+      lives: {
+        current: 5,
+        max: 5,
+      },
+      rewardClaims: {
+        levelFirstClear: {},
+      },
+    });
+  });
+
+  it('sanitizes malformed economy values before persistence reuse', () => {
+    expect(
+      sanitizePlayerState({
+        wallet: {
+          coins: 12.9,
+        },
+        lives: {
+          current: 20,
+          max: 4,
+        },
+        inventory: {
+          boosters: {
+            bomb: -2,
+            unknown: 9,
+          },
+        },
+      }),
+    ).toMatchObject({
+      wallet: {
+        coins: 12,
+      },
+      lives: {
+        current: 4,
+        max: 4,
+      },
+      inventory: {
+        boosters: {
+          bomb: 0,
+          hammer: 5,
+        },
+      },
+    });
+  });
+});
