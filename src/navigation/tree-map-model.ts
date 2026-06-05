@@ -13,18 +13,9 @@ export type TreeBand = {
   bandIndex: number;
   startLevel: number;
   endLevel: number;
-  currentLevelId: number | null;
   teaseVisible: boolean;
   levels: TreeBandLevel[];
 };
-
-function sanitizeLevelId(levelId: number) {
-  return Number.isFinite(levelId) ? Math.max(1, Math.floor(levelId)) : 1;
-}
-
-function sanitizeBandIndex(bandIndex: number) {
-  return Number.isFinite(bandIndex) ? Math.max(0, Math.floor(bandIndex)) : 0;
-}
 
 function getTreeNodeState(progress: ProgressState, levelId: number): TreeNodeState {
   if (levelId < progress.unlockedLevel) {
@@ -39,11 +30,11 @@ function getTreeNodeState(progress: ProgressState, levelId: number): TreeNodeSta
 }
 
 export function getTreeBandIndexForLevel(levelId: number) {
-  return Math.floor((sanitizeLevelId(levelId) - 1) / TREE_LEVELS_PER_BAND);
+  return Math.max(0, Math.floor((Math.max(1, levelId) - 1) / TREE_LEVELS_PER_BAND));
 }
 
 export function getTreeBandLevelRange(bandIndex: number) {
-  const safeBandIndex = sanitizeBandIndex(bandIndex);
+  const safeBandIndex = Math.max(0, bandIndex);
   const startLevel = safeBandIndex * TREE_LEVELS_PER_BAND + 1;
 
   return {
@@ -53,13 +44,12 @@ export function getTreeBandLevelRange(bandIndex: number) {
 }
 
 export function buildTreeBands(progress: ProgressState, maxLevel: number): TreeBand[] {
-  const safeMaxLevel = sanitizeLevelId(maxLevel);
-  const bandCount = Math.max(1, Math.ceil(safeMaxLevel / TREE_LEVELS_PER_BAND));
+  const bandCount = Math.max(1, Math.ceil(maxLevel / TREE_LEVELS_PER_BAND));
   const currentBandIndex = getTreeBandIndexForLevel(progress.unlockedLevel);
 
   return Array.from({ length: bandCount }, (_, bandIndex) => {
     const { startLevel, endLevel } = getTreeBandLevelRange(bandIndex);
-    const clampedEndLevel = Math.min(endLevel, safeMaxLevel);
+    const clampedEndLevel = Math.min(endLevel, maxLevel);
     const levels = Array.from({ length: clampedEndLevel - startLevel + 1 }, (_, offset) => {
       const levelId = startLevel + offset;
 
@@ -73,7 +63,6 @@ export function buildTreeBands(progress: ProgressState, maxLevel: number): TreeB
       bandIndex,
       startLevel,
       endLevel: clampedEndLevel,
-      currentLevelId: levels.find((level) => level.state === 'current')?.levelId ?? null,
       teaseVisible: bandIndex === currentBandIndex + 1,
       levels,
     };

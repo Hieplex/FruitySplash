@@ -31,7 +31,6 @@ describe('tree map model', () => {
       bandIndex: 0,
       startLevel: 1,
       endLevel: 5,
-      currentLevelId: 3,
       teaseVisible: false,
     });
     expect(bands[0].levels).toEqual([
