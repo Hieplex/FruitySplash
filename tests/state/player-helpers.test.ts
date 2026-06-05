@@ -43,6 +43,15 @@ describe('player economy helpers', () => {
     });
   });
 
+  it('caps added coins at the wallet maximum', () => {
+    const player = {
+      ...createDefaultPlayerState(),
+      wallet: { coins: 999990 },
+    };
+
+    expect(addCoins(player, 25).wallet.coins).toBe(999999);
+  });
+
   it('caps lives at max and reports failed life consumption', () => {
     const emptyLives = {
       ...createDefaultPlayerState(),

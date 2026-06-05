@@ -21,6 +21,7 @@ export type ProgressState = {
 };
 
 const FIRST_CLEAR_COIN_REWARD = 50;
+export const MAX_WALLET_COINS = 999999;
 
 export function createDefaultProgress(): ProgressState {
   return {
@@ -69,6 +70,10 @@ function sanitizeCount(value: unknown, fallback = 0) {
   return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
 }
 
+function sanitizeCoinCount(value: unknown, fallback = 0) {
+  return Math.min(MAX_WALLET_COINS, sanitizeCount(value, fallback));
+}
+
 export function sanitizeProgressState(value: unknown): ProgressState {
   const defaults = createDefaultProgress();
   if (!isRecord(value)) {
@@ -86,7 +91,7 @@ export function sanitizeProgressState(value: unknown): ProgressState {
     wallet: {
       coins:
         isRecord(value.wallet) && typeof value.wallet.coins === 'number' && Number.isFinite(value.wallet.coins)
-          ? Math.max(0, Math.floor(value.wallet.coins))
+          ? sanitizeCoinCount(value.wallet.coins)
           : defaults.wallet.coins,
     },
     inventory: {
@@ -167,7 +172,7 @@ export function applyLevelCompletion(progress: ProgressState, levelId: number, s
     },
     wallet: {
       ...progress.wallet,
-      coins: progress.wallet.coins + (alreadyClaimedFirstClear ? 0 : FIRST_CLEAR_COIN_REWARD),
+      coins: sanitizeCoinCount(progress.wallet.coins + (alreadyClaimedFirstClear ? 0 : FIRST_CLEAR_COIN_REWARD)),
     },
     rewardClaims: {
       ...progress.rewardClaims,

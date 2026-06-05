@@ -1,7 +1,7 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useAudioPlayer } from 'expo-audio';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Image, ImageBackground, Modal, Pressable, Text, View, unstable_batchedUpdates, useWindowDimensions } from 'react-native';
+import { Animated, Image, ImageBackground, Modal, Pressable, Text, View, unstable_batchedUpdates, useWindowDimensions } from 'react-native';
 import { AnimatedButton } from '@/components/animated-button';
 import type { BombDropAnimation } from '@/components/bomb-effect-cell';
 import type { HammerAnimation } from '@/components/hammer-effect-cell';
@@ -16,6 +16,7 @@ import {
   soundRuntimeAssets,
   uiRuntimeAssets,
 } from '@/game/assets/runtime-assets';
+import { warmGameplayAssets } from '@/game/assets/preload-assets.native';
 import { LEVELS } from '@/game/levels/levels';
 import { createSeededRefill } from '@/game/gravity';
 import { createBoard, isAdjacent, swapCells } from '@/game/board';
@@ -26,8 +27,13 @@ import { isBoardInteractionLocked } from '@/gameplay/interaction';
 import { calculateLevelLayout } from '@/gameplay/level-layout';
 import { createMatchSteps, resolveBombClearSequence, resolveHammerClearSequence, type MatchStep, type ResolvedState } from '@/gameplay/match-cascade';
 import { getPlayableLevelId, useProgress } from '@/state/progress-store';
+import { useScreenWipe } from '@/state/screen-wipe';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
+
+const gameplaySettingsButtonImage = require('../../assets/fruity/Buttons/SettingScreen/SettingButton.png');
+const gameplaySettingsScreenImage = require('../../assets/fruity/Buttons/SettingScreen/ScreenSetting.png');
+const gameplaySettingsExitImage = require('../../assets/fruity/Buttons/SettingScreen/Exit.png');
 
 function calculateStars(score: number, star1: number, star2: number, star3: number) {
   if (score >= star3) return 3;
@@ -47,12 +53,9 @@ function createLevelState(seed: number): EngineState {
 
 const TIMER_ENABLED = false;
 
-const HOME_BUTTON_TOP = 10;
-const HOME_BUTTON_RIGHT = 10;
-const HOME_BUTTON_SIZE = 100;
-const MAP_BUTTON_TOP = 10;
-const MAP_BUTTON_RIGHT = 100;
-const MAP_BUTTON_SIZE = 100;
+const SETTINGS_BUTTON_TOP = 40;
+const SETTINGS_BUTTON_RIGHT = 10;
+const SETTINGS_BUTTON_SIZE = 70;
 
 const HUD_TOP = 100;
 const HUD_WIDTH = 440;
@@ -105,6 +108,14 @@ const GRID_CELL_AREA_PADDING = 4;
 const GRID_FRUIT_IMAGE_SCALE = 1.2;
 const MOVE_HINT_IDLE_DELAY_MS = 5000;
 const DEBUG_BOMB_BUTTON_ALWAYS_ACTIVE = true;
+const SETTINGS_PANEL_MAX_WIDTH = 520;
+const SETTINGS_PANEL_MAX_HEIGHT = 760;
+const SETTINGS_EXIT_BUTTON_SIZE = 64;
+const SETTINGS_EXIT_BUTTON_TOP = 170;
+const SETTINGS_EXIT_BUTTON_RIGHT = -5;
+const SETTINGS_MENU_BUTTON_WIDTH = 140;
+const SETTINGS_MENU_BUTTON_HEIGHT = 140;
+const SETTINGS_MENU_BUTTON_GAP = 18;
 
 function getTwoDigitMoves(moves: number) {
   return String(Math.max(0, Math.min(99, moves))).padStart(2, '0').split('').map(Number);
@@ -136,6 +147,7 @@ function toEngineState(state: ResolvedState): EngineState {
 }
 
 export default function LevelScreen() {
+  const screenWipe = useScreenWipe();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const requestedLevelId = Number(id ?? 1);
@@ -186,6 +198,11 @@ export default function LevelScreen() {
     key: number;
     state: ResolvedState;
   } | null>(null);
+  const [showBoosterRow, setShowBoosterRow] = useState(false);
+  const [showSettingsOverlay, setShowSettingsOverlay] = useState(false);
+  const settingsExitScale = useRef(new Animated.Value(1)).current;
+  const settingsHomeScale = useRef(new Animated.Value(1)).current;
+  const settingsMapScale = useRef(new Animated.Value(1)).current;
   const moveDigits = getTwoDigitMoves(MAX_MOVES - engineState.movesUsed);
   const scoreDigits = getScoreDigits(engineState.score);
   const scoreProgress = Math.max(0, Math.min(1, engineState.score / level.targetScore));
@@ -229,13 +246,46 @@ export default function LevelScreen() {
     void matchSoundPlayer.seekTo(0).finally(() => matchSoundPlayer.play());
   }
 
+  function animateSettingsExit(value: number) {
+    Animated.spring(settingsExitScale, {
+      toValue: value,
+      useNativeDriver: true,
+      speed: 24,
+      bounciness: 6,
+    }).start();
+  }
+
+  function animateSettingsMenu(scale: Animated.Value, value: number) {
+    Animated.spring(scale, {
+      toValue: value,
+      useNativeDriver: true,
+      speed: 24,
+      bounciness: 6,
+    }).start();
+  }
+
   useEffect(() => {
     if (!progress.hydrated || requestedLevelId === levelId) {
       return;
     }
 
-    router.replace(`/level/${levelId}`);
-  }, [levelId, progress.hydrated, requestedLevelId]);
+    screenWipe.replace(`/level/${levelId}`);
+  }, [levelId, progress.hydrated, requestedLevelId, screenWipe]);
+
+  useEffect(() => {
+    void warmGameplayAssets();
+    const timer = setTimeout(() => setShowBoosterRow(true), 140);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!showBoosterRow) {
+      return;
+    }
+
+    screenWipe.setScreenReady();
+  }, [screenWipe, showBoosterRow]);
 
   useEffect(() => {
     completedLevelRef.current = null;
@@ -258,6 +308,11 @@ export default function LevelScreen() {
     setPendingResolvedState(null);
     setPendingPostDropResolution(null);
     setPendingReshuffleResolution(null);
+    setShowBoosterRow(false);
+    setShowSettingsOverlay(false);
+
+    const timer = setTimeout(() => setShowBoosterRow(true), 140);
+    return () => clearTimeout(timer);
   }, [level.id, level.seed, level.timeLimitSeconds]);
 
   useEffect(() => {
@@ -347,7 +402,7 @@ export default function LevelScreen() {
 
       completedLevelRef.current = level.id;
       progress.completeLevel(level.id, engineState.score, stars);
-      router.replace({
+      screenWipe.replace({
         pathname: '/results',
         params: {
           levelId: String(level.id),
@@ -357,14 +412,14 @@ export default function LevelScreen() {
         },
       });
     }
-  }, [engineState.score, level, progress]);
+  }, [engineState.score, level, progress, screenWipe]);
 
   useEffect(() => {
     if (!TIMER_ENABLED) return;
     if (timeLeft > 0) return;
 
     const stars = calculateStars(engineState.score, level.star1, level.star2, level.star3);
-    router.replace({
+    screenWipe.replace({
       pathname: '/results',
       params: {
         levelId: String(level.id),
@@ -373,7 +428,7 @@ export default function LevelScreen() {
         won: '0',
       },
     });
-  }, [engineState.score, level, timeLeft]);
+  }, [engineState.score, level, screenWipe, timeLeft]);
 
   function beginSwap(from: Position, to: Position) {
     const scoreEvents: ScoreEvent[] = [];
@@ -655,42 +710,22 @@ export default function LevelScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.cream }}>
-      <ImageBackground source={backgroundRuntimeAssets.gameplay} resizeMode="cover" style={{ flex: 1 }}>
+      <ImageBackground source={backgroundRuntimeAssets.gameplay} fadeDuration={0} resizeMode="cover" style={{ flex: 1 }}>
       <Pressable
-        onPress={() => router.replace('/home')}
+        onPress={() => setShowSettingsOverlay(true)}
         style={({ pressed }) => ({
           position: 'absolute',
-          top: HOME_BUTTON_TOP,
-          right: HOME_BUTTON_RIGHT,
-          width: HOME_BUTTON_SIZE,
-          height: HOME_BUTTON_SIZE,
+          top: SETTINGS_BUTTON_TOP,
+          right: SETTINGS_BUTTON_RIGHT,
+          width: SETTINGS_BUTTON_SIZE,
+          height: SETTINGS_BUTTON_SIZE,
           zIndex: 5,
           opacity: pressed ? 0.82 : 1,
           transform: [{ scale: pressed ? 0.94 : 1 }],
         })}
       >
         <Image
-          source={uiRuntimeAssets.gameplayHomeButton}
-          fadeDuration={0}
-          resizeMode="contain"
-          style={{ width: '100%', height: '100%' }}
-        />
-      </Pressable>
-      <Pressable
-        onPress={() => router.replace('/map')}
-        style={({ pressed }) => ({
-          position: 'absolute',
-          top: MAP_BUTTON_TOP,
-          right: MAP_BUTTON_RIGHT,
-          width: MAP_BUTTON_SIZE,
-          height: MAP_BUTTON_SIZE,
-          zIndex: 5,
-          opacity: pressed ? 0.82 : 1,
-          transform: [{ scale: pressed ? 0.94 : 1 }],
-        })}
-      >
-        <Image
-          source={uiRuntimeAssets.gameplayMapButton}
+          source={gameplaySettingsButtonImage}
           fadeDuration={0}
           resizeMode="contain"
           style={{ width: '100%', height: '100%' }}
@@ -711,6 +746,7 @@ export default function LevelScreen() {
       >
         <Image
           source={barRuntimeAssets.score}
+          fadeDuration={0}
           resizeMode="stretch"
           style={{
             position: 'absolute',
@@ -723,6 +759,7 @@ export default function LevelScreen() {
         />
         <Image
           source={barRuntimeAssets.progress}
+          fadeDuration={0}
           resizeMode="stretch"
           style={{
             position: 'absolute',
@@ -792,6 +829,7 @@ export default function LevelScreen() {
         </View>
         <Image
           source={barRuntimeAssets.moves}
+          fadeDuration={0}
           resizeMode="contain"
           style={{
             position: 'absolute',
@@ -909,14 +947,15 @@ export default function LevelScreen() {
               </View>
             </View>
           </View>
-          <View
-            style={{
-              flexDirection: 'row',
-              gap: levelLayout.boosterButtonGap ?? 16,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
+          {showBoosterRow ? (
+            <View
+              style={{
+                flexDirection: 'row',
+                gap: levelLayout.boosterButtonGap ?? 16,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Bomb booster"
@@ -986,7 +1025,8 @@ export default function LevelScreen() {
                 style={{ width: '100%', height: '100%' }}
               />
             </Pressable>
-          </View>
+            </View>
+          ) : null}
         </View>
       </View>
       </ImageBackground>
@@ -1020,6 +1060,134 @@ export default function LevelScreen() {
                 setPaused(false);
               }}
             />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal animationType="fade" transparent visible={showSettingsOverlay}>
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            padding: spacing.lg,
+          }}
+        >
+          <View
+            style={{
+              width: Math.min(screenWidth * 0.88, SETTINGS_PANEL_MAX_WIDTH),
+              height: Math.min(screenHeight * 0.72, SETTINGS_PANEL_MAX_HEIGHT),
+              justifyContent: 'center',
+              alignItems: 'center',
+            }}
+          >
+            <Image
+              source={gameplaySettingsScreenImage}
+              fadeDuration={0}
+              resizeMode="contain"
+              style={{
+                width: '100%',
+                height: '100%',
+              }}
+            />
+            <View
+              style={{
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                top: 0,
+                bottom: 0,
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: SETTINGS_MENU_BUTTON_GAP,
+                }}
+              >
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Go home"
+                  onPress={() => {
+                    setShowSettingsOverlay(false);
+                    screenWipe.replace('/chapters');
+                  }}
+                  onPressIn={() => animateSettingsMenu(settingsHomeScale, 0.92)}
+                  onPressOut={() => animateSettingsMenu(settingsHomeScale, 1)}
+                  style={{
+                    width: SETTINGS_MENU_BUTTON_WIDTH,
+                    height: SETTINGS_MENU_BUTTON_HEIGHT,
+                  }}
+                >
+                  <Animated.Image
+                    source={uiRuntimeAssets.gameplayHomeButton}
+                    fadeDuration={0}
+                    resizeMode="contain"
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      transform: [{ scale: settingsHomeScale }],
+                    }}
+                  />
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Go to map"
+                  onPress={() => {
+                    setShowSettingsOverlay(false);
+                    screenWipe.replace('/map');
+                  }}
+                  onPressIn={() => animateSettingsMenu(settingsMapScale, 0.92)}
+                  onPressOut={() => animateSettingsMenu(settingsMapScale, 1)}
+                  style={{
+                    width: SETTINGS_MENU_BUTTON_WIDTH,
+                    height: SETTINGS_MENU_BUTTON_HEIGHT,
+                  }}
+                >
+                  <Animated.Image
+                    source={uiRuntimeAssets.gameplayMapButton}
+                    fadeDuration={0}
+                    resizeMode="contain"
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      transform: [{ scale: settingsMapScale }],
+                    }}
+                  />
+                </Pressable>
+              </View>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close settings"
+              onPress={() => setShowSettingsOverlay(false)}
+              onPressIn={() => animateSettingsExit(0.92)}
+              onPressOut={() => animateSettingsExit(1)}
+              style={{
+                position: 'absolute',
+                top: SETTINGS_EXIT_BUTTON_TOP,
+                right: SETTINGS_EXIT_BUTTON_RIGHT,
+                width: SETTINGS_EXIT_BUTTON_SIZE,
+                height: SETTINGS_EXIT_BUTTON_SIZE,
+                zIndex: 2,
+              }}
+            >
+              <Animated.Image
+                source={gameplaySettingsExitImage}
+                fadeDuration={0}
+                resizeMode="contain"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  transform: [{ scale: settingsExitScale }],
+                }}
+              />
+            </Pressable>
           </View>
         </View>
       </Modal>

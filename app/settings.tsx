@@ -1,12 +1,18 @@
-import { router } from 'expo-router';
+import { useEffect } from 'react';
 import { Switch, Text, View } from 'react-native';
 import { AnimatedButton } from '@/components/animated-button';
 import { useProgress } from '@/state/progress-store';
+import { useScreenWipe } from '@/state/screen-wipe';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
 
 export default function SettingsScreen() {
+  const screenWipe = useScreenWipe();
   const progress = useProgress();
+
+  useEffect(() => {
+    screenWipe.setScreenReady();
+  }, [screenWipe]);
 
   return (
     <View style={{ flex: 1, padding: spacing.lg, gap: spacing.xl, backgroundColor: colors.cream }}>
@@ -34,7 +40,7 @@ export default function SettingsScreen() {
         <Switch value={progress.soundEnabled} onValueChange={progress.setSoundEnabled} />
       </View>
 
-      <AnimatedButton label="Back to menu" kind="secondary" onPress={() => router.replace('/home')} />
+      <AnimatedButton label="Back to menu" kind="secondary" onPress={() => screenWipe.replace('/chapters')} />
     </View>
   );
 }

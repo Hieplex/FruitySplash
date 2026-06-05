@@ -1,6 +1,7 @@
 import {
   consumeBooster as consumeProgressBooster,
   createDefaultProgress,
+  MAX_WALLET_COINS,
   sanitizeProgressState,
   type BoosterId,
   type ProgressState,
@@ -20,12 +21,16 @@ function sanitizeCount(value: number) {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
+function sanitizeCoinCount(value: number) {
+  return Math.min(MAX_WALLET_COINS, sanitizeCount(value));
+}
+
 export function addCoins(player: PlayerState, amount: number): PlayerState {
   return {
     ...player,
     wallet: {
       ...player.wallet,
-      coins: player.wallet.coins + sanitizeCount(amount),
+      coins: sanitizeCoinCount(player.wallet.coins + sanitizeCount(amount)),
     },
   };
 }

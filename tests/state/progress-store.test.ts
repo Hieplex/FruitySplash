@@ -36,6 +36,16 @@ describe('progress store helpers', () => {
     expect(isLevelUnlocked(upgraded, 2)).toBe(true);
   });
 
+  it('caps first-clear coin rewards at the wallet maximum', () => {
+    const progress = {
+      ...createDefaultProgress(),
+      wallet: { coins: 999980 },
+    };
+    const next = applyLevelCompletion(progress, 1, 2200, 2);
+
+    expect(next.wallet.coins).toBe(999999);
+  });
+
   it('consumes booster inventory only when available', () => {
     const progress = {
       ...createDefaultProgress(),
@@ -68,7 +78,7 @@ describe('progress store helpers', () => {
         starsByLevel: { 1: 3, bad: 2, 2: -1 },
         bestScoreByLevel: { 1: 2500, 3: 'wrong' },
         soundEnabled: false,
-        wallet: { coins: 12.8 },
+        wallet: { coins: 1000000.8 },
         inventory: { boosters: { bomb: 2.9, hammer: 4.5 } },
         rewardClaims: { levelFirstClear: { 1: true, bad: true, 2: false } },
       }),
@@ -77,7 +87,7 @@ describe('progress store helpers', () => {
       starsByLevel: { 1: 3, 2: 0 },
       bestScoreByLevel: { 1: 2500 },
       soundEnabled: false,
-      wallet: { coins: 12 },
+      wallet: { coins: 999999 },
       inventory: { boosters: { bomb: 2, hammer: 4 } },
       lives: { current: 5, max: 5 },
       rewardClaims: { levelFirstClear: { 1: true } },

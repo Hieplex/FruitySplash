@@ -17,14 +17,14 @@ export function FruitTileImage({
   opacity?: number;
 }) {
   if (source) {
-    return <Image source={source} style={{ width: size, height: size, opacity }} resizeMode="contain" />;
+    return <Image source={source} fadeDuration={0} style={{ width: size, height: size, opacity }} resizeMode="contain" />;
   }
 
   if (svg) {
     return <SvgXml xml={svg} width={size} height={size} opacity={opacity} />;
   }
 
-  return <Image source={{ uri } satisfies ImageSourcePropType} style={{ width: size, height: size, opacity }} />;
+  return <Image source={{ uri } satisfies ImageSourcePropType} fadeDuration={0} style={{ width: size, height: size, opacity }} />;
 }
 
 export function FruitTile({

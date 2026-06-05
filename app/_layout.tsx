@@ -2,7 +2,9 @@ import { Stack } from 'expo-router';
 import { StatusBar, setStatusBarHidden } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { AppState, Platform } from 'react-native';
+import { warmStartupAssets } from '@/game/assets/preload-assets.native';
 import { ProgressProvider } from '@/state/progress-store';
+import { ScreenWipeProvider } from '@/state/screen-wipe';
 import { colors } from '@/theme/colors';
 
 type NavigationBarModule = typeof import('expo-navigation-bar');
@@ -28,6 +30,7 @@ function hideSystemBars() {
 export default function RootLayout() {
   useEffect(() => {
     hideSystemBars();
+    void warmStartupAssets();
 
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
@@ -40,13 +43,15 @@ export default function RootLayout() {
 
   return (
     <ProgressProvider>
-      <StatusBar hidden />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: colors.cream },
-        }}
-      />
+      <ScreenWipeProvider>
+        <StatusBar hidden />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: colors.cream },
+          }}
+        />
+      </ScreenWipeProvider>
     </ProgressProvider>
   );
 }

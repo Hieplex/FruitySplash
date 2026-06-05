@@ -4,7 +4,7 @@ const gameplayBackground = require('../../../assets/GamePlay/GamePlayScreen.png'
 const buttonPlay = require('../../../assets/fruity/button-play.png');
 const buttonExit = require('../../../assets/fruity/button-exit.png');
 const buttonHome = require('../../../assets/fruity/Buttons/Home.png');
-const buttonSettings = require('../../../assets/fruity/Buttons/SettingButton.png');
+const buttonSettings = require('../../../assets/fruity/Buttons/SettingScreen/SettingButton.png');
 const gameplayHomeButton = require('../../../assets/fruity/Buttons/Home.png');
 const gameplayMapButton = require('../../../assets/fruity/Buttons/Map_Button.png');
 const gameplayBombButton = require('../../../assets/fruity/Buttons/Bomb/Bomb.png');
@@ -77,6 +77,17 @@ const scoreNumber7 = require('../../../assets/fruity/ScoreNumber/7.png');
 const scoreNumber8 = require('../../../assets/fruity/ScoreNumber/8.png');
 const scoreNumber9 = require('../../../assets/fruity/ScoreNumber/9.png');
 const scoreNumberStrip = require('../../../assets/fruity/ScoreNumber/digits-strip.png');
+const coinIcon = require('../../../assets/Coins/Coins.png');
+const coinNumber0 = require('../../../assets/Coins/0.png');
+const coinNumber1 = require('../../../assets/Coins/1.png');
+const coinNumber2 = require('../../../assets/Coins/2.png');
+const coinNumber3 = require('../../../assets/Coins/3.png');
+const coinNumber4 = require('../../../assets/Coins/4.png');
+const coinNumber5 = require('../../../assets/Coins/5.png');
+const coinNumber6 = require('../../../assets/Coins/6.png');
+const coinNumber7 = require('../../../assets/Coins/7.png');
+const coinNumber8 = require('../../../assets/Coins/8.png');
+const coinNumber9 = require('../../../assets/Coins/9.png');
 
 export const fruitRuntimeAssetIds = ['strawberry', 'apple', 'orange', 'grape', 'blueberry'] as const;
 
@@ -133,6 +144,22 @@ export const scoreNumberRuntimeAssets = {
 } as const;
 
 export const scoreNumberSpriteAsset = scoreNumberStrip;
+
+export const coinRuntimeAssets = {
+  icon: coinIcon,
+  digits: {
+    '0': coinNumber0,
+    '1': coinNumber1,
+    '2': coinNumber2,
+    '3': coinNumber3,
+    '4': coinNumber4,
+    '5': coinNumber5,
+    '6': coinNumber6,
+    '7': coinNumber7,
+    '8': coinNumber8,
+    '9': coinNumber9,
+  },
+} as const;
 
 export const vfxRuntimeAssets = {
   splashBurst,

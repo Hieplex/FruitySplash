@@ -1,14 +1,17 @@
-import { router, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
+import { useEffect } from 'react';
 import { Text, View } from 'react-native';
 import { AnimatedButton } from '@/components/animated-button';
 import { StarRating } from '@/components/star-rating';
 import { LEVELS } from '@/game/levels/levels';
 import { getResultsRouteModel } from '@/navigation/results-route';
 import { useProgress } from '@/state/progress-store';
+import { useScreenWipe } from '@/state/screen-wipe';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
 
 export default function ResultsScreen() {
+  const screenWipe = useScreenWipe();
   const params = useLocalSearchParams<{
     levelId?: string;
     score?: string;
@@ -25,6 +28,10 @@ export default function ResultsScreen() {
     progress,
     levelIds: LEVELS.map((level) => level.id),
   });
+
+  useEffect(() => {
+    screenWipe.setScreenReady();
+  }, [screenWipe]);
 
   return (
     <View style={{ flex: 1, justifyContent: 'center', padding: spacing.lg, backgroundColor: colors.cream }}>
@@ -44,8 +51,8 @@ export default function ResultsScreen() {
         <Text style={{ color: colors.cocoa, fontSize: 18, fontWeight: '700' }}>Score {score}</Text>
 
         <View style={{ gap: spacing.md }}>
-          <AnimatedButton label={routeModel.primaryLabel} onPress={() => router.replace(routeModel.primaryRoute)} />
-          <AnimatedButton label="Level map" kind="secondary" onPress={() => router.replace('/map')} />
+          <AnimatedButton label={routeModel.primaryLabel} onPress={() => screenWipe.replace(routeModel.primaryRoute)} />
+          <AnimatedButton label="Level map" kind="secondary" onPress={() => screenWipe.replace('/map')} />
         </View>
       </View>
     </View>
