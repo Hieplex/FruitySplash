@@ -7,6 +7,7 @@ import {
   fruitRuntimeAssets,
   scoreNumberRuntimeAssets,
   scoreNumberSpriteAsset,
+  treeMapRuntimeAssets,
   uiRuntimeAssets,
 } from '@/game/assets/runtime-assets';
 
@@ -84,6 +85,8 @@ const gameplayAssets = [
   ...Object.values(scoreNumberRuntimeAssets),
 ] as const;
 
+const treeMapAssets = Object.values(treeMapRuntimeAssets) as readonly number[];
+
 const warmedAssetGroups = new Set<string>();
 
 async function warmAssetGroup(key: string, assets: readonly number[]) {
@@ -110,4 +113,8 @@ export function warmChapterDecorAssets() {
 
 export function warmGameplayAssets() {
   return warmAssetGroup('gameplay', gameplayAssets);
+}
+
+export function warmTreeMapAssets() {
+  return warmAssetGroup('treeMap', treeMapAssets);
 }

@@ -161,6 +161,15 @@ export const coinRuntimeAssets = {
   },
 } as const;
 
+export const treeMapRuntimeAssets = {
+  trunk: backgroundRuntimeAssets.map,
+  canopy: challenge1,
+  tease: challenge2,
+  currentGlow: coinIcon,
+  completedBadge: fullStar,
+  lockedBud: emptyStar,
+} as const;
+
 export const vfxRuntimeAssets = {
   splashBurst,
   splashDroplet,
