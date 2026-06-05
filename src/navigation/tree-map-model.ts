@@ -30,11 +30,13 @@ function getTreeNodeState(progress: ProgressState, levelId: number): TreeNodeSta
 }
 
 export function getTreeBandIndexForLevel(levelId: number) {
-  return Math.max(0, Math.floor((Math.max(1, levelId) - 1) / TREE_LEVELS_PER_BAND));
+  const safeLevelId = Number.isFinite(levelId) ? Math.max(1, Math.floor(levelId)) : 1;
+
+  return Math.floor((safeLevelId - 1) / TREE_LEVELS_PER_BAND);
 }
 
 export function getTreeBandLevelRange(bandIndex: number) {
-  const safeBandIndex = Math.max(0, bandIndex);
+  const safeBandIndex = Number.isFinite(bandIndex) ? Math.max(0, Math.floor(bandIndex)) : 0;
   const startLevel = safeBandIndex * TREE_LEVELS_PER_BAND + 1;
 
   return {
@@ -44,12 +46,13 @@ export function getTreeBandLevelRange(bandIndex: number) {
 }
 
 export function buildTreeBands(progress: ProgressState, maxLevel: number): TreeBand[] {
-  const bandCount = Math.max(1, Math.ceil(maxLevel / TREE_LEVELS_PER_BAND));
+  const safeMaxLevel = Number.isFinite(maxLevel) ? Math.max(1, Math.floor(maxLevel)) : 1;
+  const bandCount = Math.max(1, Math.ceil(safeMaxLevel / TREE_LEVELS_PER_BAND));
   const currentBandIndex = getTreeBandIndexForLevel(progress.unlockedLevel);
 
   return Array.from({ length: bandCount }, (_, bandIndex) => {
     const { startLevel, endLevel } = getTreeBandLevelRange(bandIndex);
-    const clampedEndLevel = Math.min(endLevel, maxLevel);
+    const clampedEndLevel = Math.min(endLevel, safeMaxLevel);
     const levels = Array.from({ length: clampedEndLevel - startLevel + 1 }, (_, offset) => {
       const levelId = startLevel + offset;
 
