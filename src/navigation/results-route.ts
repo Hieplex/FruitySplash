@@ -1,4 +1,5 @@
 import { getPlayableLevelId, isLevelUnlocked, type ProgressState } from '@/state/progress-helpers';
+import { getBandRevealPlan } from '@/navigation/tree-map-focus';
 
 type ResultsRouteModelInput = {
   levelIdParam: string | string[] | undefined;
@@ -10,7 +11,7 @@ type ResultsRouteModelInput = {
 type ResultsRouteModel = {
   displayLevelId: number;
   primaryLabel: 'Next level' | 'Retry' | 'Level map';
-  primaryRoute: `/level/${number}` | '/map';
+  primaryRoute: `/level/${number}` | '/map' | `/map?focusLevel=${number}&revealBandStart=${number}`;
 };
 
 function parseLevelIdParam(value: string | string[] | undefined) {
@@ -58,6 +59,18 @@ export function getResultsRouteModel({
   const nextLevelId = requestedLevelId + 1;
   const nextLevelExists = availableLevelIds.includes(nextLevelId);
   const nextLevelUnlocked = isLevelUnlocked(progress, nextLevelId);
+  const revealPlan = getBandRevealPlan({
+    currentLevelId: requestedLevelId,
+    unlockedLevel: progress.unlockedLevel,
+  });
+
+  if (revealPlan && nextLevelExists && nextLevelUnlocked) {
+    return {
+      displayLevelId,
+      primaryLabel: 'Level map',
+      primaryRoute: `/map?focusLevel=${revealPlan.focusLevel}&revealBandStart=${revealPlan.revealBandStartLevel}`,
+    };
+  }
 
   if (!nextLevelExists || !nextLevelUnlocked) {
     return {

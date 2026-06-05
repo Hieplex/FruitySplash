@@ -57,6 +57,26 @@ describe('results route model', () => {
     });
   });
 
+  it('returns to the tree map with reveal params after finishing a band', () => {
+    const progress = {
+      ...createDefaultProgress(),
+      unlockedLevel: 6,
+    };
+
+    expect(
+      getResultsRouteModel({
+        levelIdParam: '5',
+        won: true,
+        progress,
+        levelIds: [1, 2, 3, 4, 5, 6],
+      }),
+    ).toMatchObject({
+      displayLevelId: 5,
+      primaryLabel: 'Level map',
+      primaryRoute: '/map?focusLevel=6&revealBandStart=6',
+    });
+  });
+
   it('falls back to the map for nonexistent result levels instead of building invalid level routes', () => {
     const progress = {
       ...createDefaultProgress(),
