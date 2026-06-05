@@ -98,8 +98,9 @@ async function warmAssetGroup(key: string, assets: readonly number[]) {
 
   try {
     await Asset.loadAsync([...assets]);
-  } catch {
+  } catch (error) {
     warmedAssetGroups.delete(key);
+    console.warn(`[assets] Failed to warm ${key} asset group`, error);
   }
 }
 

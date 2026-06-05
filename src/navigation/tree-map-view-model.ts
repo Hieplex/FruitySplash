@@ -59,8 +59,8 @@ export function buildTreeMapViewModel({
   maxLevel: number;
 }): TreeMapViewModel {
   const bands = buildTreeBands(progress, maxLevel);
-  const currentBandIndex = getTreeBandIndexForLevel(progress.unlockedLevel);
   const lastBandIndex = bands.length - 1;
+  const currentBandIndex = Math.min(getTreeBandIndexForLevel(progress.unlockedLevel), lastBandIndex);
 
   return {
     currentBandIndex,

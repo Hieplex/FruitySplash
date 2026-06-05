@@ -75,4 +75,31 @@ describe('tree map view model', () => {
       ],
     });
   });
+
+  it('clamps the current band when unlocked progress extends past the generated bands', () => {
+    const progress = {
+      ...createDefaultProgress(),
+      unlockedLevel: 12,
+      starsByLevel: { 1: 3, 2: 3, 3: 3 },
+    };
+
+    const viewModel = buildTreeMapViewModel({ progress, maxLevel: 3 });
+
+    expect(viewModel.currentBandIndex).toBe(0);
+    expect(viewModel.bands).toEqual([
+      {
+        bandIndex: 0,
+        startLevel: 1,
+        endLevel: 3,
+        trunkSide: 'left',
+        nodes: [
+          { levelId: 1, state: 'completed', stars: 3, anchor: { x: 0.42, y: 0.16 } },
+          { levelId: 2, state: 'completed', stars: 3, anchor: { x: 0.58, y: 0.31 } },
+          { levelId: 3, state: 'completed', stars: 3, anchor: { x: 0.44, y: 0.48 } },
+        ],
+        canopy: { visible: false, mode: 'closed' },
+        tease: { visible: false },
+      },
+    ]);
+  });
 });
