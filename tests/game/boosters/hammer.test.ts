@@ -23,10 +23,10 @@ describe('hammer booster clear area', () => {
     expect(cleared[3][2]).toBe(null);
     
     // Check that neighboring cells are untouched
-    expect(cleared[2][2]).toBe(board[2][2]);
-    expect(cleared[4][2]).toBe(board[4][2]);
-    expect(cleared[3][1]).toBe(board[3][1]);
-    expect(cleared[3][3]).toBe(board[3][3]);
+    expect(cleared[2][2]).toEqual(board[2][2]);
+    expect(cleared[4][2]).toEqual(board[4][2]);
+    expect(cleared[3][1]).toEqual(board[3][1]);
+    expect(cleared[3][3]).toEqual(board[3][3]);
   });
 
   it('creates downward-only unique drop motions after a hammer clear', () => {

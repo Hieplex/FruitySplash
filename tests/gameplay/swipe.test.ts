@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { createBoardFromRows } from '../../src/game/board';
-import { getBoardCellFromPoint, getSwipeTarget } from '../../src/gameplay/swipe';
+import {
+  getBoardCellFromPagePoint,
+  getBoardCellFromPoint,
+  getSwipeTarget,
+  getSwipeTargetFromReleaseCell,
+} from '../../src/gameplay/swipe';
 
 const board = createBoardFromRows([
   [0, 1, 2, 3, 4, 0],
@@ -39,6 +44,15 @@ describe('swipe target detection', () => {
     });
   });
 
+  it('uses the adjacent release cell as the swipe target', () => {
+    expect(getSwipeTargetFromReleaseCell({ row: 2, col: 2 }, { row: 3, col: 2 }, board)).toEqual({
+      row: 3,
+      col: 2,
+    });
+    expect(getSwipeTargetFromReleaseCell({ row: 2, col: 2 }, { row: 4, col: 2 }, board)).toBeNull();
+    expect(getSwipeTargetFromReleaseCell({ row: 2, col: 2 }, { row: 2, col: 2 }, board)).toBeNull();
+  });
+
   it('ignores tiny drags and swipes outside the board', () => {
     expect(getSwipeTarget({ row: 2, col: 2 }, { dx: 8, dy: 3 }, board)).toBeNull();
     expect(getSwipeTarget({ row: 0, col: 0 }, { dx: -40, dy: 4 }, board)).toBeNull();
@@ -72,5 +86,34 @@ describe('swipe target detection', () => {
     expect(getBoardCellFromPoint({ x: 2, y: 20 }, metrics)).toBeNull();
     expect(getBoardCellFromPoint({ x: 64, y: 20 }, metrics)).toEqual({ row: 0, col: 1 });
     expect(getBoardCellFromPoint({ x: 600, y: 20 }, metrics)).toBeNull();
+  });
+
+  it('finds bottom-row cells from measured page coordinates', () => {
+    const metrics = {
+      rows: 8,
+      cols: 6,
+      tileSize: 58,
+      gap: 4,
+      boardPadding: 4,
+    };
+    const boardOrigin = { x: 24, y: 96 };
+    const bottomRowGrapePoint = {
+      x: boardOrigin.x + metrics.boardPadding + metrics.tileSize + metrics.gap + metrics.tileSize / 2,
+      y: boardOrigin.y + metrics.boardPadding + 7 * (metrics.tileSize + metrics.gap) + metrics.tileSize / 2,
+    };
+
+    expect(getBoardCellFromPagePoint(bottomRowGrapePoint, boardOrigin, metrics)).toEqual({ row: 7, col: 1 });
+  });
+
+  it('does not treat child-local fruit coordinates as board coordinates', () => {
+    const metrics = {
+      rows: 8,
+      cols: 6,
+      tileSize: 58,
+      gap: 4,
+      boardPadding: 4,
+    };
+
+    expect(getBoardCellFromPagePoint({ x: 29, y: 29 }, null, metrics)).toBeNull();
   });
 });

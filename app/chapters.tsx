@@ -26,7 +26,7 @@ type ChapterCardBase = {
 };
 
 const chapterCards: ChapterCardBase[] = [
-  { id: 'sweet-grove', image: require('../assets/Chapter/SweetGrove .png') },
+  { id: 'sweet-grove', image: require('../assets/Chapter/SweetGrove.png') },
   {
     id: 'citrus-meadow',
     image: require('../assets/Chapter/CitrusMeadow.png'),

@@ -6,9 +6,8 @@ import {
   View,
   useWindowDimensions,
   type ImageSourcePropType,
-  type View as ViewType,
 } from 'react-native';
-import type { Board, DropMotion, Position } from '@/game/types';
+import type { Board, BoardCell, DropMotion, Position } from '@/game/types';
 import type { RecommendedMove } from '@/game/move-hints';
 import { isBombEffectCell, type BombDropAnimation } from '@/components/bomb-effect-cell';
 import { BombEffectLayer } from '@/components/bomb-effect-layer';
@@ -18,15 +17,22 @@ import { FruitTile } from '@/components/fruit-tile';
 import { DropLayer, ReshuffleLayer } from '@/components/game-board-layers';
 import { MatchSplashOverlay, type MatchSplash } from '@/components/match-splash-overlay';
 import { MoveHintOverlay } from '@/components/move-hint-overlay';
-import { getBoardCellFromPoint, getSwipeTarget } from '@/gameplay/swipe';
+import {
+  SpecialCellLayer,
+  type SpecialMergeAnimation,
+  type SpecialWipeAnimation,
+} from '@/components/special-cell-layer';
+import { getCellFruit, isSpecialCell } from '@/game/board';
+import { buildDropMotionTimings } from '@/gameplay/drop-timing';
+import { getBoardCellFromPoint, getSwipeTarget, getSwipeTargetFromReleaseCell } from '@/gameplay/swipe';
 import { spacing } from '@/theme/spacing';
 
 type PendingSwap = {
   key: number;
   from: Position;
   to: Position;
-  fromFruit: number;
-  toFruit: number;
+  fromCell: BoardCell;
+  toCell: BoardCell;
   accepted: boolean;
 };
 
@@ -34,6 +40,7 @@ export type DropAnimation = {
   key: number;
   motions: DropMotion[] | null;
   hiddenCells?: Position[];
+  startDelaysByColumn?: Record<number, number>;
 };
 
 export type ReshuffleAnimation = {
@@ -41,9 +48,6 @@ export type ReshuffleAnimation = {
   board: Board;
 };
 
-const DROP_MIN_DURATION_MS = 390;
-const DROP_DISTANCE_DURATION_MS = 55;
-const DROP_MAX_DURATION_MS = 640;
 const RESHUFFLE_DURATION_MS = 360;
 
 export function GameBoard({
@@ -55,6 +59,8 @@ export function GameBoard({
   dropAnimation,
   bombDropAnimation,
   reshuffleAnimation,
+  specialMergeAnimation,
+  specialWipeAnimation,
   bombDropSource,
   hammerAnimation,
   hammerSource,
@@ -64,6 +70,7 @@ export function GameBoard({
   tileGap = spacing.sm,
   boardPadding = spacing.sm,
   fruitImageScale = 1.28,
+  showTouchBounds = false,
   onSelect,
   onSwipe,
   onSwapAnimationEnd,
@@ -72,6 +79,8 @@ export function GameBoard({
   onBombDropAnimationComplete,
   onHammerAnimationComplete,
   onReshuffleAnimationComplete,
+  onSpecialMergeComplete,
+  onSpecialWipeComplete,
 }: {
   board: Board;
   selected: Position | null;
@@ -81,6 +90,8 @@ export function GameBoard({
   dropAnimation?: DropAnimation | null;
   bombDropAnimation?: BombDropAnimation | null;
   reshuffleAnimation?: ReshuffleAnimation | null;
+  specialMergeAnimation?: SpecialMergeAnimation | null;
+  specialWipeAnimation?: SpecialWipeAnimation | null;
   bombDropSource?: ImageSourcePropType;
   hammerAnimation?: HammerAnimation | null;
   hammerSource?: ImageSourcePropType;
@@ -90,6 +101,7 @@ export function GameBoard({
   tileGap?: number;
   boardPadding?: number;
   fruitImageScale?: number;
+  showTouchBounds?: boolean;
   onSelect: (position: Position) => void;
   onSwipe?: (from: Position, to: Position) => void;
   onSwapAnimationEnd?: () => void;
@@ -98,6 +110,8 @@ export function GameBoard({
   onBombDropAnimationComplete?: (key: number) => void;
   onHammerAnimationComplete?: (key: number) => void;
   onReshuffleAnimationComplete?: (key: number) => void;
+  onSpecialMergeComplete?: (key: number) => void;
+  onSpecialWipeComplete?: (key: number) => void;
 }) {
   const { width } = useWindowDimensions();
   const rowCount = board.length;
@@ -114,8 +128,6 @@ export function GameBoard({
   const animatedSwapKey = useRef<number | null>(null);
   const animatedDropKey = useRef<number | null>(null);
   const animatedReshuffleKey = useRef<number | null>(null);
-  const boardRef = useRef<ViewType | null>(null);
-  const boardWindowOrigin = useRef<{ x: number; y: number } | null>(null);
   const gestureStartCell = useRef<Position | null>(null);
   const onSwapAnimationEndRef = useRef(onSwapAnimationEnd);
   const onDropAnimationCompleteRef = useRef(onDropAnimationComplete);
@@ -150,6 +162,13 @@ export function GameBoard({
 
     return hidden;
   }, [dropAnimation, dropMotions]);
+  const dropTimingSchedule = useMemo(
+    () =>
+      buildDropMotionTimings(dropMotions, {
+        startDelaysByColumn: dropAnimation?.startDelaysByColumn,
+      }),
+    [dropAnimation?.startDelaysByColumn, dropMotions],
+  );
   const bombClearedCells = useMemo(() => {
     if (!bombDropAnimation?.blastCells) {
       return new Set<string>();
@@ -157,6 +176,24 @@ export function GameBoard({
 
     return new Set(bombDropAnimation.blastCells.map((cell) => `${cell.row}:${cell.col}`));
   }, [bombDropAnimation]);
+  const specialMergeHiddenCells = useMemo(() => {
+    if (!specialMergeAnimation) {
+      return new Set<string>();
+    }
+
+    return new Set(
+      [...specialMergeAnimation.sourceCells, ...(specialMergeAnimation.hiddenCells ?? [])].map(
+        (cell) => `${cell.row}:${cell.col}`,
+      ),
+    );
+  }, [specialMergeAnimation]);
+  const fruityCrossHiddenCells = useMemo(() => {
+    if (specialWipeAnimation?.sourceTool !== 'fruityCross') {
+      return new Set<string>();
+    }
+
+    return new Set(specialWipeAnimation.cells.map((cell) => `${cell.row}:${cell.col}`));
+  }, [specialWipeAnimation]);
 
   useEffect(() => {
     onSwapAnimationEndRef.current = onSwapAnimationEnd;
@@ -169,6 +206,7 @@ export function GameBoard({
   useEffect(() => {
     onReshuffleAnimationCompleteRef.current = onReshuffleAnimationComplete;
   }, [onReshuffleAnimationComplete]);
+
 
   useLayoutEffect(() => {
     if (!pendingSwap) {
@@ -239,13 +277,9 @@ export function GameBoard({
 
     animatedDropKey.current = dropAnimation.key;
     dropProgress.setValue(0);
-    const maxDistance = dropMotions.reduce(
-      (current, motion) => Math.max(current, Math.abs(motion.to.row - motion.from.row)),
-      1,
-    );
     const animation = Animated.timing(dropProgress, {
       toValue: 1,
-      duration: Math.min(DROP_MAX_DURATION_MS, DROP_MIN_DURATION_MS + maxDistance * DROP_DISTANCE_DURATION_MS),
+      duration: dropTimingSchedule.totalDurationMs,
       easing: Easing.out(Easing.quad),
       useNativeDriver: true,
     });
@@ -257,7 +291,7 @@ export function GameBoard({
     });
 
     return () => animation.stop();
-  }, [dropAnimation, dropMotions, dropProgress]);
+  }, [dropAnimation, dropMotions, dropProgress, dropTimingSchedule.totalDurationMs]);
 
   useLayoutEffect(() => {
     if (!reshuffleAnimation) {
@@ -297,6 +331,12 @@ export function GameBoard({
     if (dropAnimation && bombClearedCells.has(`${rowIndex}:${colIndex}`)) {
       return true;
     }
+    if (specialMergeHiddenCells.has(`${rowIndex}:${colIndex}`)) {
+      return true;
+    }
+    if (fruityCrossHiddenCells.has(`${rowIndex}:${colIndex}`)) {
+      return true;
+    }
 
     return (
       (pendingSwap &&
@@ -316,28 +356,6 @@ export function GameBoard({
     }),
     [boardPadding, colCount, gap, rowCount, tileSize],
   );
-  const measureBoardWindowOrigin = useCallback(() => {
-    boardRef.current?.measureInWindow((x, y) => {
-      boardWindowOrigin.current = { x, y };
-    });
-  }, []);
-  const getCellFromPagePoint = useCallback(
-    (pageX: number, pageY: number) => {
-      const origin = boardWindowOrigin.current;
-      if (!origin) {
-        return null;
-      }
-
-      return getBoardCellFromPoint(
-        {
-          x: pageX - origin.x,
-          y: pageY - origin.y,
-        },
-        touchMetrics,
-      );
-    },
-    [touchMetrics],
-  );
   const getCellFromLocalPoint = useCallback(
     (x: number, y: number) => getBoardCellFromPoint({ x, y }, touchMetrics),
     [touchMetrics],
@@ -348,15 +366,9 @@ export function GameBoard({
         onStartShouldSetPanResponder: () => !disabled,
         onMoveShouldSetPanResponder: () => !disabled,
         onPanResponderGrant: (event) => {
-          gestureStartCell.current =
-            getCellFromPagePoint(event.nativeEvent.pageX, event.nativeEvent.pageY) ??
-            getCellFromLocalPoint(event.nativeEvent.locationX, event.nativeEvent.locationY);
-
-          if (!gestureStartCell.current) {
-            measureBoardWindowOrigin();
-          }
+          gestureStartCell.current = getCellFromLocalPoint(event.nativeEvent.locationX, event.nativeEvent.locationY);
         },
-        onPanResponderRelease: (_, gesture) => {
+        onPanResponderRelease: (event, gesture) => {
           const origin = gestureStartCell.current;
           gestureStartCell.current = null;
 
@@ -364,7 +376,10 @@ export function GameBoard({
             return;
           }
 
-          const target = getSwipeTarget(origin, { dx: gesture.dx, dy: gesture.dy }, board);
+          const releaseCell = getCellFromLocalPoint(event.nativeEvent.locationX, event.nativeEvent.locationY);
+          const target =
+            getSwipeTargetFromReleaseCell(origin, releaseCell, board) ??
+            getSwipeTarget(origin, { dx: gesture.dx, dy: gesture.dy }, board);
           if (target) {
             onSwipe?.(origin, target);
             return;
@@ -377,14 +392,11 @@ export function GameBoard({
         },
         onPanResponderTerminationRequest: () => false,
       }),
-    [board, disabled, getCellFromLocalPoint, getCellFromPagePoint, measureBoardWindowOrigin, onSelect, onSwipe],
+    [board, disabled, getCellFromLocalPoint, onSelect, onSwipe],
   );
 
   return (
     <View
-      ref={boardRef}
-      {...panResponder.panHandlers}
-      onLayout={measureBoardWindowOrigin}
       style={{
         alignSelf: 'center',
         backgroundColor: 'transparent',
@@ -412,10 +424,18 @@ export function GameBoard({
                 }}
               >
                 <FruitTile
-                  fruit={fruit}
+                  fruit={getCellFruit(fruit)}
                   size={tileSize}
                   imageScale={fruitImageScale}
                   selected={selected?.row === rowIndex && selected?.col === colIndex}
+                  special={
+                    isSpecialCell(fruit)
+                      ? {
+                          kind: fruit.kind,
+                          powerTier: fruit.powerTier,
+                        }
+                      : null
+                  }
                   disabled
                   onPress={() => {
                     if (disabled) return;
@@ -447,10 +467,18 @@ export function GameBoard({
             }}
           >
             <FruitTile
-              fruit={pendingSwap.fromFruit}
+              fruit={getCellFruit(pendingSwap.fromCell)}
               size={tileSize}
               imageScale={fruitImageScale}
               selected
+              special={
+                isSpecialCell(pendingSwap.fromCell)
+                  ? {
+                      kind: pendingSwap.fromCell.kind,
+                      powerTier: pendingSwap.fromCell.powerTier,
+                    }
+                  : null
+              }
               onPress={() => undefined}
             />
           </Animated.View>
@@ -463,10 +491,18 @@ export function GameBoard({
             }}
           >
             <FruitTile
-              fruit={pendingSwap.toFruit}
+              fruit={getCellFruit(pendingSwap.toCell)}
               size={tileSize}
               imageScale={fruitImageScale}
               selected
+              special={
+                isSpecialCell(pendingSwap.toCell)
+                  ? {
+                      kind: pendingSwap.toCell.kind,
+                      powerTier: pendingSwap.toCell.powerTier,
+                    }
+                  : null
+              }
               onPress={() => undefined}
             />
           </Animated.View>
@@ -476,6 +512,8 @@ export function GameBoard({
         <DropLayer
           dropAnimation={dropAnimation}
           dropProgress={dropProgress}
+          dropMotionTimings={dropTimingSchedule.timings}
+          dropTotalDurationMs={dropTimingSchedule.totalDurationMs}
           tileSize={tileSize}
           gap={gap}
           boardPadding={boardPadding}
@@ -490,6 +528,18 @@ export function GameBoard({
           gap={gap}
           boardPadding={boardPadding}
           fruitImageScale={fruitImageScale}
+        />
+      ) : null}
+      {specialMergeAnimation || specialWipeAnimation ? (
+        <SpecialCellLayer
+          mergeAnimation={specialMergeAnimation}
+          wipeAnimation={specialWipeAnimation}
+          tileSize={tileSize}
+          gap={gap}
+          boardPadding={boardPadding}
+          fruitImageScale={fruitImageScale}
+          onMergeComplete={onSpecialMergeComplete}
+          onWipeComplete={onSpecialWipeComplete}
         />
       ) : null}
       {bombDropAnimation ? (
@@ -521,11 +571,58 @@ export function GameBoard({
         key={matchSplash?.key ?? 'empty-match-splash'}
         splash={matchSplash ?? null}
         tileSize={tileSize}
+        fruitImageScale={fruitImageScale}
         gap={gap}
         boardPadding={boardPadding}
-        boardPixelHeight={boardPixelHeight}
         onComplete={onMatchSplashComplete}
       />
+      <View
+        {...panResponder.panHandlers}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: boardPixelWidth + boardPadding * 2,
+          height: boardPixelHeight + boardPadding * 2,
+          zIndex: 45,
+          elevation: 45,
+          backgroundColor: 'transparent',
+        }}
+      />
+      {showTouchBounds ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: boardPadding,
+            left: boardPadding,
+            right: boardPadding,
+            bottom: boardPadding,
+            zIndex: 40,
+            elevation: 40,
+          }}
+        >
+          {board.map((row, rowIndex) =>
+            row.map((_, colIndex) => (
+              <View
+                key={`touch-bounds-${rowIndex}-${colIndex}`}
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  top: rowIndex * (tileSize + gap),
+                  left: colIndex * (tileSize + gap),
+                  width: tileSize,
+                  height: tileSize,
+                  borderRadius: Math.max(4, Math.round(tileSize * 0.08)),
+                  borderWidth: 2,
+                  borderColor: 'rgba(0, 255, 255, 0.9)',
+                  backgroundColor: 'rgba(0, 255, 255, 0.08)',
+                }}
+              />
+            )),
+          )}
+        </View>
+      ) : null}
     </View>
   );
 }

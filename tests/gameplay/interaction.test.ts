@@ -10,6 +10,8 @@ describe('gameplay interaction locks', () => {
         hasPendingSwap: false,
         hasMatchSplash: true,
         hasDropAnimation: false,
+        hasSpecialMergeAnimation: false,
+        hasSpecialWipeAnimation: false,
         hasPendingResolvedState: false,
       }),
     ).toBe(true);
@@ -20,6 +22,8 @@ describe('gameplay interaction locks', () => {
         hasPendingSwap: false,
         hasMatchSplash: false,
         hasDropAnimation: false,
+        hasSpecialMergeAnimation: false,
+        hasSpecialWipeAnimation: false,
         hasPendingResolvedState: true,
       }),
     ).toBe(true);
@@ -30,6 +34,8 @@ describe('gameplay interaction locks', () => {
         hasPendingSwap: false,
         hasMatchSplash: false,
         hasDropAnimation: true,
+        hasSpecialMergeAnimation: false,
+        hasSpecialWipeAnimation: false,
         hasPendingResolvedState: false,
       }),
     ).toBe(true);
@@ -40,6 +46,32 @@ describe('gameplay interaction locks', () => {
         hasPendingSwap: false,
         hasMatchSplash: false,
         hasDropAnimation: false,
+        hasSpecialMergeAnimation: true,
+        hasSpecialWipeAnimation: false,
+        hasPendingResolvedState: false,
+      }),
+    ).toBe(true);
+
+    expect(
+      isBoardInteractionLocked({
+        paused: false,
+        hasPendingSwap: false,
+        hasMatchSplash: false,
+        hasDropAnimation: false,
+        hasSpecialMergeAnimation: false,
+        hasSpecialWipeAnimation: true,
+        hasPendingResolvedState: false,
+      }),
+    ).toBe(true);
+
+    expect(
+      isBoardInteractionLocked({
+        paused: false,
+        hasPendingSwap: false,
+        hasMatchSplash: false,
+        hasDropAnimation: false,
+        hasSpecialMergeAnimation: false,
+        hasSpecialWipeAnimation: false,
         hasPendingResolvedState: false,
       }),
     ).toBe(false);

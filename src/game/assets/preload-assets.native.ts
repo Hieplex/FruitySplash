@@ -12,7 +12,7 @@ import {
 } from '@/game/assets/runtime-assets';
 
 const chapterBackground = require('../../../assets/Chapter/ChapterBackground.png');
-const chapterSweetGrove = require('../../../assets/Chapter/SweetGrove .png');
+const chapterSweetGrove = require('../../../assets/Chapter/SweetGrove.png');
 const chapterCitrusLocked = require('../../../assets/Chapter/Locked/CitrusMeadow.png');
 const chapterGrapeLocked = require('../../../assets/Chapter/Locked/GrapeHaven.png');
 const chapterMelonLocked = require('../../../assets/Chapter/Locked/MelonBay.png');
@@ -73,6 +73,17 @@ const gameplayAssets = [
   uiRuntimeAssets.gameplayBombButton,
   uiRuntimeAssets.gameplayBombDrop,
   uiRuntimeAssets.gameplayHammerButton,
+  uiRuntimeAssets.gameplayLineRocketButton,
+  uiRuntimeAssets.gameplayLineRocketImage,
+  uiRuntimeAssets.gameplayLineRocketThrustBig,
+  uiRuntimeAssets.gameplayLineRocketThrustSmall,
+  uiRuntimeAssets.gameplayFruityCrossButton,
+  uiRuntimeAssets.gameplayFruityCrossGroup,
+  uiRuntimeAssets.gameplayFruityCrossTop,
+  uiRuntimeAssets.gameplayFruityCrossDown,
+  uiRuntimeAssets.gameplayFruityCrossLeft,
+  uiRuntimeAssets.gameplayFruityCrossRight,
+  uiRuntimeAssets.gameplayLightningFruitsButton,
   uiRuntimeAssets.navigatorBar,
   barRuntimeAssets.score,
   barRuntimeAssets.moves,

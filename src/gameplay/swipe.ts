@@ -11,6 +11,11 @@ export type BoardPoint = {
   y: number;
 };
 
+export type BoardWindowOrigin = {
+  x: number;
+  y: number;
+};
+
 export type BoardTouchMetrics = {
   rows: number;
   cols: number;
@@ -44,6 +49,39 @@ export function getBoardCellFromPoint(point: BoardPoint, metrics: BoardTouchMetr
   }
 
   return { row, col };
+}
+
+export function getBoardCellFromPagePoint(
+  point: BoardPoint,
+  boardOrigin: BoardWindowOrigin | null,
+  metrics: BoardTouchMetrics,
+): Position | null {
+  if (!boardOrigin) {
+    return null;
+  }
+
+  return getBoardCellFromPoint(
+    {
+      x: point.x - boardOrigin.x,
+      y: point.y - boardOrigin.y,
+    },
+    metrics,
+  );
+}
+
+export function getSwipeTargetFromReleaseCell(
+  origin: Position,
+  releaseCell: Position | null,
+  board: Board,
+): Position | null {
+  if (!releaseCell || !isWithinBounds(releaseCell, board)) {
+    return null;
+  }
+
+  const rowDistance = Math.abs(releaseCell.row - origin.row);
+  const colDistance = Math.abs(releaseCell.col - origin.col);
+
+  return rowDistance + colDistance === 1 ? releaseCell : null;
 }
 
 export function getSwipeTarget(

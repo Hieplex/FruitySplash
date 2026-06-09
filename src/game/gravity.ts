@@ -1,5 +1,6 @@
 import { cloneBoard } from './board';
-import type { Board, DropMotion, Fruit, NullableBoard, Position, RefillSource } from './types';
+import { cloneCell, createFruitCell, getCellFruit } from './cells';
+import type { Board, BoardCell, DropMotion, Fruit, NullableBoard, Position, RefillSource } from './types';
 
 type SeededRefillOptions = {
   seed: number;
@@ -57,16 +58,18 @@ export function collapseBoard(
 ): { board: Board; spawned: Array<Position & { fruit: Fruit }>; dropMotions: DropMotion[] } {
   const rows = board.length;
   const cols = board[0]?.length ?? 0;
-  const next: Board = Array.from({ length: rows }, () => Array.from({ length: cols }, () => 0));
+  const next: Board = Array.from({ length: rows }, () =>
+    Array.from({ length: cols }, () => createFruitCell(0)),
+  );
   const spawned: Array<Position & { fruit: Fruit }> = [];
   const dropMotions: DropMotion[] = [];
 
   for (let col = 0; col < cols; col += 1) {
     const existing = board
-      .map((row, rowIndex) => ({ fruit: row[col], row: rowIndex }))
-      .filter((entry): entry is { fruit: Fruit; row: number } => entry.fruit !== null);
+      .map((row, rowIndex) => ({ cell: row[col], row: rowIndex }))
+      .filter((entry): entry is { cell: BoardCell; row: number } => entry.cell !== null);
     const missing = rows - existing.length;
-    const column: Fruit[] = Array.from({ length: missing }, (_, index) => {
+    const spawnedCells: BoardCell[] = Array.from({ length: missing }, (_, index) => {
       const row = index;
       const fruit = refill.next({ row, col });
       spawned.push({ row, col, fruit });
@@ -76,14 +79,15 @@ export function collapseBoard(
         to: { row, col },
         spawned: true,
       });
-      return fruit;
-    }).concat(existing.map(({ fruit }) => fruit));
+      return createFruitCell(fruit);
+    });
+    const column: BoardCell[] = spawnedCells.concat(existing.map(({ cell }) => cloneCell(cell)));
 
-    existing.forEach(({ fruit, row }, index) => {
+    existing.forEach(({ cell, row }, index) => {
       const targetRow = missing + index;
       if (row !== targetRow) {
         dropMotions.push({
-          fruit,
+          fruit: getCellFruit(cell),
           from: { row, col },
           to: { row: targetRow, col },
           spawned: false,

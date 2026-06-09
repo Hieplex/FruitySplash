@@ -138,6 +138,49 @@ export function getLevelStars(progress: ProgressState, levelId: number) {
   return progress.starsByLevel[levelId] ?? 0;
 }
 
+export function hasCompletedLevel(progress: ProgressState, levelId: number) {
+  return progress.rewardClaims.levelFirstClear[levelId] === true || getLevelStars(progress, levelId) > 0;
+}
+
+export function getCompletedLevelCountInRange(progress: ProgressState, startLevel: number, endLevel: number) {
+  const safeStartLevel = Math.max(1, Math.floor(startLevel));
+  const safeEndLevel = Math.max(safeStartLevel, Math.floor(endLevel));
+  let completedCount = 0;
+
+  for (let levelId = safeStartLevel; levelId <= safeEndLevel; levelId += 1) {
+    if (hasCompletedLevel(progress, levelId)) {
+      completedCount += 1;
+    }
+  }
+
+  return completedCount;
+}
+
+export function hasCompletedLevelRange(progress: ProgressState, startLevel: number, endLevel: number) {
+  const safeStartLevel = Math.max(1, Math.floor(startLevel));
+  const safeEndLevel = Math.max(safeStartLevel, Math.floor(endLevel));
+
+  return getCompletedLevelCountInRange(progress, safeStartLevel, safeEndLevel) === safeEndLevel - safeStartLevel + 1;
+}
+
+export function getCompletedLevelCountFromStart(progress: ProgressState) {
+  let completedCount = 0;
+
+  for (let levelId = 1; ; levelId += 1) {
+    if (!hasCompletedLevel(progress, levelId)) {
+      break;
+    }
+
+    completedCount += 1;
+  }
+
+  return completedCount;
+}
+
+export function getLastCompletedLevelIdFromStart(progress: ProgressState) {
+  return Math.max(1, getCompletedLevelCountFromStart(progress));
+}
+
 export function isLevelUnlocked(progress: ProgressState, levelId: number) {
   return levelId <= progress.unlockedLevel;
 }

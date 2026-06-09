@@ -1,48 +1,80 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Animated, View, Easing } from 'react-native';
+import { MATCH_SPLASH_LAYER_DEPTH } from '@/components/game-board-layer-depths';
 import { fruitRuntimeAssetIds, fruitRuntimeAssets, vfxRuntimeAssets } from '@/game/assets/runtime-assets';
 import type { Position } from '@/game/types';
 import { createMatchSplashParticlePlan } from '@/components/match-splash-plan';
 
 export type MatchSplashCell = Position & {
   fruit: number;
+  delayMs?: number;
 };
 
 export type MatchSplash = {
   key: number;
   chain: number;
   cells: MatchSplashCell[];
+  durationMs?: number;
+  preShrinkMs?: number;
 };
 
-const SQUEEZE_DURATION_MS = 90;
-const SHRINK_DURATION_MS = 300;
-const SPLASH_DURATION_MS = 620;
-const FLASH_PEAK_MS = 105;
-const FLASH_FADE_MS = 300;
-const CLOUD_PEAK_MS = 175;
-const CLOUD_FADE_MS = 520;
-const SPARKLE_START_MS = 70;
-const SPARKLE_DURATION_MS = 360;
+const SPLASH_DURATION_MS = 200;
+const FLASH_PEAK_MS = 35;
+const FLASH_FADE_MS = 110;
+const CLOUD_PEAK_MS = 60;
+const CLOUD_FADE_MS = 155;
+const SPARKLE_START_MS = 18;
+const SPARKLE_DURATION_MS = 110;
 
-const SQUEEZE_PHASE_END = SQUEEZE_DURATION_MS / SPLASH_DURATION_MS;
-const SHRINK_PHASE_END = SHRINK_DURATION_MS / SPLASH_DURATION_MS;
+function createSafeSparkleWindow(startAtRaw: number, durationRaw: number) {
+  const SAFE_END_LIMIT = 0.92;
+  const MIN_SEGMENT = 0.01;
+  const startAt = Math.min(SAFE_END_LIMIT - MIN_SEGMENT * 2, Math.max(0, startAtRaw));
+  const endAt = Math.min(SAFE_END_LIMIT, Math.max(startAt + MIN_SEGMENT * 2, startAt + durationRaw));
+  const peakAt = Math.min(endAt - MIN_SEGMENT, Math.max(startAt + MIN_SEGMENT, startAt + 0.12));
+
+  return { startAt, peakAt, endAt };
+}
+
+function shiftWindow(startAt: number, peakAt: number, endAt: number, offset: number) {
+  const maxOffset = 0.86;
+  const clampedOffset = Math.max(0, Math.min(maxOffset, offset));
+  const shiftedStart = Math.min(0.9, startAt + clampedOffset);
+  const shiftedPeak = Math.min(0.95, peakAt + clampedOffset);
+  const shiftedEnd = Math.min(1, endAt + clampedOffset);
+
+  return {
+    startAt: shiftedStart,
+    peakAt: Math.max(shiftedStart + 0.01, shiftedPeak),
+    endAt: Math.max(shiftedPeak + 0.01, shiftedEnd),
+  };
+}
 
 export function MatchSplashOverlay({
   splash,
   tileSize,
+  fruitImageScale,
   gap,
   boardPadding,
   onComplete,
 }: {
   splash: MatchSplash | null;
   tileSize: number;
+  fruitImageScale: number;
   gap: number;
   boardPadding: number;
-  boardPixelHeight: number;
   onComplete?: (key: number) => void;
 }) {
   const progress = useRef(new Animated.Value(0)).current;
   const onCompleteRef = useRef(onComplete);
+  const cells = useMemo(() => splash?.cells.slice(0, 18) ?? [], [splash]);
+  const maxDelayMs = useMemo(
+    () => cells.reduce((current, cell) => Math.max(current, cell.delayMs ?? 0), 0),
+    [cells],
+  );
+  const splashDurationMs = splash?.durationMs ?? SPLASH_DURATION_MS;
+  const preShrinkMs = splash?.preShrinkMs ?? 0;
+  const totalDurationMs = preShrinkMs + splashDurationMs + maxDelayMs;
 
   useEffect(() => {
     onCompleteRef.current = onComplete;
@@ -57,8 +89,8 @@ export function MatchSplashOverlay({
     progress.setValue(0);
     const animation = Animated.timing(progress, {
       toValue: 1,
-      duration: SPLASH_DURATION_MS,
-      easing: Easing.out(Easing.quad), // Added Easing.out to simulate initial snappy explosion velocity
+      duration: totalDurationMs,
+      easing: Easing.out(Easing.quad),
       useNativeDriver: true,
     });
 
@@ -69,29 +101,11 @@ export function MatchSplashOverlay({
     });
 
     return () => animation.stop();
-  }, [progress, splash]);
-
-  const cells = useMemo(() => splash?.cells.slice(0, 18) ?? [], [splash]);
+  }, [progress, splash, totalDurationMs]);
 
   if (!splash) {
     return null;
   }
-
-  const fruitScaleX = progress.interpolate({
-    inputRange: [0, SQUEEZE_PHASE_END, SHRINK_PHASE_END],
-    outputRange: [1, 0.65, 0.01],
-    extrapolate: 'clamp',
-  });
-  const fruitScaleY = progress.interpolate({
-    inputRange: [0, SQUEEZE_PHASE_END, SHRINK_PHASE_END],
-    outputRange: [1, 1.4, 0.01],
-    extrapolate: 'clamp',
-  });
-  const shrinkOpacity = progress.interpolate({
-    inputRange: [0, SQUEEZE_PHASE_END, SHRINK_PHASE_END],
-    outputRange: [1, 0.95, 0],
-    extrapolate: 'clamp',
-  });
 
   return (
     <View
@@ -102,12 +116,18 @@ export function MatchSplashOverlay({
         left: 0,
         right: 0,
         bottom: 0,
-        zIndex: 20,
-        elevation: 20,
+        zIndex: MATCH_SPLASH_LAYER_DEPTH.zIndex,
+        elevation: MATCH_SPLASH_LAYER_DEPTH.elevation,
       }}
     >
       {cells.map((cell, cellIndex) => {
         const center = tileSize / 2;
+        const cellDelayMs = cell.delayMs ?? 0;
+        const totalDuration = Math.max(1, totalDurationMs);
+        const preShrinkStartAt = preShrinkMs > 0 ? cellDelayMs / totalDuration : 0;
+        const preShrinkEndAt =
+          preShrinkMs > 0 ? (cellDelayMs + preShrinkMs) / totalDuration : preShrinkStartAt;
+        const preShrinkHoldAt = Math.max(0, preShrinkStartAt - 0.001);
         const plan = createMatchSplashParticlePlan({
           key: splash.key,
           row: cell.row,
@@ -115,28 +135,56 @@ export function MatchSplashOverlay({
           fruit: cell.fruit,
         });
         const assetId = fruitRuntimeAssetIds[cell.fruit] ?? fruitRuntimeAssetIds[0];
-        const fruitImageSize = Math.round(tileSize * 1.28);
+        const fruitImageSize = Math.round(tileSize * fruitImageScale);
         const mysteryCloudSize = Math.round(tileSize * 1.5);
         const coreFlashSize = Math.round(tileSize * 1.02);
         const sparkleBaseSize = Math.max(12, Math.round(tileSize * 0.22));
+        const mysteryCloudWindow = shiftWindow(
+          preShrinkMs / totalDuration,
+          (preShrinkMs + CLOUD_PEAK_MS) / totalDuration,
+          (preShrinkMs + CLOUD_FADE_MS) / totalDuration,
+          cellDelayMs / totalDuration,
+        );
+        const coreFlashWindow = shiftWindow(
+          preShrinkMs / totalDuration,
+          (preShrinkMs + FLASH_PEAK_MS) / totalDuration,
+          (preShrinkMs + FLASH_FADE_MS) / totalDuration,
+          cellDelayMs / totalDuration,
+        );
+        const preShrinkScale = progress.interpolate({
+          inputRange:
+            preShrinkStartAt <= 0.001
+              ? [0, Math.max(0.001, preShrinkEndAt)]
+              : [0, preShrinkHoldAt, preShrinkStartAt, Math.max(preShrinkStartAt + 0.001, preShrinkEndAt)],
+          outputRange: preShrinkStartAt <= 0.001 ? [1, 0.15] : [1, 1, 1, 0.15],
+          extrapolate: 'clamp',
+        });
+        const preShrinkOpacity = progress.interpolate({
+          inputRange:
+            preShrinkStartAt <= 0.001
+              ? [0, Math.max(0.001, preShrinkEndAt)]
+              : [0, preShrinkHoldAt, preShrinkStartAt, Math.max(preShrinkStartAt + 0.001, preShrinkEndAt)],
+          outputRange: preShrinkStartAt <= 0.001 ? [1, 0] : [1, 1, 1, 0],
+          extrapolate: 'clamp',
+        });
         const mysteryCloudScale = progress.interpolate({
-          inputRange: [0, CLOUD_PEAK_MS / SPLASH_DURATION_MS, CLOUD_FADE_MS / SPLASH_DURATION_MS, 1],
-          outputRange: [0.5, plan.mysteryCloud.scale, 0.98, 0.98],
+          inputRange: [0, mysteryCloudWindow.startAt, mysteryCloudWindow.peakAt, mysteryCloudWindow.endAt, 1],
+          outputRange: [0.5, 0.5, plan.mysteryCloud.scale, 0.98, 0.98],
           extrapolate: 'clamp',
         });
         const mysteryCloudOpacity = progress.interpolate({
-          inputRange: [0, CLOUD_PEAK_MS / SPLASH_DURATION_MS, CLOUD_FADE_MS / SPLASH_DURATION_MS, 1],
-          outputRange: [0, plan.mysteryCloud.opacity, 0.16, 0],
+          inputRange: [0, mysteryCloudWindow.startAt, mysteryCloudWindow.peakAt, mysteryCloudWindow.endAt, 1],
+          outputRange: [0, 0, plan.mysteryCloud.opacity, 0.16, 0],
           extrapolate: 'clamp',
         });
         const coreFlashScale = progress.interpolate({
-          inputRange: [0, FLASH_PEAK_MS / SPLASH_DURATION_MS, FLASH_FADE_MS / SPLASH_DURATION_MS, 1],
-          outputRange: [0.28, plan.coreFlash.scale, 0.82, 0.82],
+          inputRange: [0, coreFlashWindow.startAt, coreFlashWindow.peakAt, coreFlashWindow.endAt, 1],
+          outputRange: [0.28, 0.28, plan.coreFlash.scale, 0.82, 0.82],
           extrapolate: 'clamp',
         });
         const coreFlashOpacity = progress.interpolate({
-          inputRange: [0, FLASH_PEAK_MS / SPLASH_DURATION_MS, FLASH_FADE_MS / SPLASH_DURATION_MS, 1],
-          outputRange: [0, plan.coreFlash.opacity, 0.08, 0],
+          inputRange: [0, coreFlashWindow.startAt, coreFlashWindow.peakAt, coreFlashWindow.endAt, 1],
+          outputRange: [0, 0, plan.coreFlash.opacity, 0.08, 0],
           extrapolate: 'clamp',
         });
 
@@ -153,6 +201,19 @@ export function MatchSplashOverlay({
               justifyContent: 'center',
             }}
           >
+            {preShrinkMs > 0 ? (
+              <Animated.Image
+                source={fruitRuntimeAssets[assetId]}
+                resizeMode="contain"
+                style={{
+                  position: 'absolute',
+                  width: fruitImageSize,
+                  height: fruitImageSize,
+                  opacity: preShrinkOpacity,
+                  transform: [{ scaleX: preShrinkScale }, { scaleY: preShrinkScale }],
+                }}
+              />
+            ) : null}
             <Animated.Image
               source={vfxRuntimeAssets.mysteryCloud}
               resizeMode="contain"
@@ -163,17 +224,6 @@ export function MatchSplashOverlay({
                 height: mysteryCloudSize,
                 opacity: mysteryCloudOpacity,
                 transform: [{ rotate: plan.mysteryCloud.rotate }, { scale: mysteryCloudScale }],
-              }}
-            />
-            <Animated.Image
-              source={fruitRuntimeAssets[assetId]}
-              resizeMode="contain"
-              style={{
-                position: 'absolute',
-                width: fruitImageSize,
-                height: fruitImageSize,
-                opacity: shrinkOpacity,
-                transform: [{ scaleX: fruitScaleX }, { scaleY: fruitScaleY }],
               }}
             />
             <Animated.Image
@@ -190,9 +240,10 @@ export function MatchSplashOverlay({
             />
             {plan.sparkles.map((sparkle, sparkleIndex) => {
               const sparkleSize = Math.round(sparkleBaseSize * sparkle.size);
-              const startAt = (SPARKLE_START_MS + sparkle.delayMs) / SPLASH_DURATION_MS;
-              const peakAt = Math.min(0.72, startAt + 0.12);
-              const endAt = Math.min(0.92, startAt + SPARKLE_DURATION_MS / SPLASH_DURATION_MS);
+              const { startAt, peakAt, endAt } = createSafeSparkleWindow(
+                (SPARKLE_START_MS + sparkle.delayMs + (cell.delayMs ?? 0)) / totalDurationMs,
+                SPARKLE_DURATION_MS / totalDurationMs,
+              );
               const translateX = progress.interpolate({
                 inputRange: [0, startAt, endAt, 1],
                 outputRange: [0, 0, sparkle.driftX * tileSize, sparkle.driftX * tileSize],

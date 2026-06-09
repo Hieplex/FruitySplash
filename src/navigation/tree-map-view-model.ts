@@ -45,8 +45,9 @@ export type TreeMapViewModel = {
 };
 
 function getNodeAnchor(index: number): TreeMapNodeAnchor {
-  const fallbackAnchor = BASE_NODE_ANCHORS[BASE_NODE_ANCHORS.length - 1];
-  const anchor = BASE_NODE_ANCHORS[index] ?? fallbackAnchor;
+  const reversedIndex = BASE_NODE_ANCHORS.length - 1 - index;
+  const fallbackAnchor = BASE_NODE_ANCHORS[0];
+  const anchor = BASE_NODE_ANCHORS[reversedIndex] ?? fallbackAnchor;
 
   return { x: anchor.x, y: anchor.y };
 }

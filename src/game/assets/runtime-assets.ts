@@ -10,6 +10,17 @@ const gameplayMapButton = require('../../../assets/fruity/Buttons/Map_Button.png
 const gameplayBombButton = require('../../../assets/fruity/Buttons/Bomb/Bomb.png');
 const gameplayBombDrop = require('../../../assets/fruity/Buttons/Bomb/AnimateBomb.png');
 const gameplayHammerButton = require('../../../assets/fruity/Buttons/Hammer.png');
+const gameplayLineRocketButton = require('../../../assets/fruity/Buttons/LineRocket/LineRocket.png');
+const gameplayLineRocketImage = require('../../../assets/fruity/Buttons/LineRocket/LineRocketImg.png');
+const gameplayLineRocketThrustBig = require('../../../assets/fruity/Buttons/LineRocket/LineRocketThrustBig.png');
+const gameplayLineRocketThrustSmall = require('../../../assets/fruity/Buttons/LineRocket/LineRocketThrustSmall.png');
+const gameplayFruityCrossButton = require('../../../assets/fruity/Buttons/FruityCross/FruityCross.png');
+const gameplayFruityCrossGroup = require('../../../assets/fruity/Buttons/FruityCross/FruityCrossGroup.png');
+const gameplayFruityCrossTop = require('../../../assets/fruity/Buttons/FruityCross/Top.png');
+const gameplayFruityCrossDown = require('../../../assets/fruity/Buttons/FruityCross/Down.png');
+const gameplayFruityCrossLeft = require('../../../assets/fruity/Buttons/FruityCross/left.png');
+const gameplayFruityCrossRight = require('../../../assets/fruity/Buttons/FruityCross/Right.png');
+const gameplayLightningFruitsButton = require('../../../assets/fruity/Buttons/LightningFruits.png');
 const navigatorBar = require('../../../assets/fruity/Bar/Navigatorbar/navigatorbar-trim.png');
 const gameLogo = require('../../../assets/fruity/gamelogo.png');
 const challenge1 = require('../../../assets/Level/challenges/C1.png');
@@ -28,6 +39,7 @@ const challenge13 = require('../../../assets/Level/challenges/C13.png');
 const challenge14 = require('../../../assets/Level/challenges/C14.png');
 const challenge15 = require('../../../assets/Level/challenges/C15.png');
 const challenge16 = require('../../../assets/Level/challenges/C16.png');
+const levelSocket = require('../../../assets/Level/Sockets/Socket.png');
 const strawberry = require('../../../assets/fruity/Fruit-type/fruit-strawberry.png');
 const apple = require('../../../assets/fruity/Fruit-type/fruit-apple.png');
 const grape = require('../../../assets/fruity/Fruit-type/fruit-grape.png');
@@ -88,6 +100,11 @@ const coinNumber6 = require('../../../assets/Coins/6.png');
 const coinNumber7 = require('../../../assets/Coins/7.png');
 const coinNumber8 = require('../../../assets/Coins/8.png');
 const coinNumber9 = require('../../../assets/Coins/9.png');
+const homeRootBackground = require('../../../assets/Home/RootBackground/RootBackground.png');
+const homeSkyMorning = require('../../../assets/Home/SkyBackGround/Morning.png');
+const homeClouds = require('../../../assets/Home/Clouds.png');
+const homeTree = require('../../../assets/Home/Tree.png');
+const homeTreeRoot = require('../../../assets/Home/Root.png');
 
 export const fruitRuntimeAssetIds = ['strawberry', 'apple', 'orange', 'grape', 'blueberry'] as const;
 
@@ -117,6 +134,17 @@ export const uiRuntimeAssets = {
   gameplayBombButton,
   gameplayBombDrop,
   gameplayHammerButton,
+  gameplayLineRocketButton,
+  gameplayLineRocketImage,
+  gameplayLineRocketThrustBig,
+  gameplayLineRocketThrustSmall,
+  gameplayFruityCrossButton,
+  gameplayFruityCrossGroup,
+  gameplayFruityCrossTop,
+  gameplayFruityCrossDown,
+  gameplayFruityCrossLeft,
+  gameplayFruityCrossRight,
+  gameplayLightningFruitsButton,
   navigatorBar,
   gameLogo,
 } as const;
@@ -162,9 +190,12 @@ export const coinRuntimeAssets = {
 } as const;
 
 export const treeMapRuntimeAssets = {
-  trunk: backgroundRuntimeAssets.map,
-  canopy: challenge1,
-  tease: challenge2,
+  rootBackground: homeRootBackground,
+  sky: homeSkyMorning,
+  clouds: homeClouds,
+  trunk: homeTree,
+  root: homeTreeRoot,
+  socket: levelSocket,
   currentGlow: coinIcon,
   completedBadge: fullStar,
   lockedBud: emptyStar,

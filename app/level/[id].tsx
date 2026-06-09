@@ -8,6 +8,7 @@ import type { HammerAnimation } from '@/components/hammer-effect-cell';
 import { GameBoard, type DropAnimation, type ReshuffleAnimation } from '@/components/game-board';
 import type { MatchSplash } from '@/components/match-splash-overlay';
 import { ScoreReelDigits } from '@/components/score-reel-digits';
+import type { SpecialMergeAnimation, SpecialWipeAnimation } from '@/components/special-cell-layer';
 import { resolveSwap, type ResolveSwapResult } from '@/game/engine';
 import {
   backgroundRuntimeAssets,
@@ -19,13 +20,35 @@ import {
 import { warmGameplayAssets } from '@/game/assets/preload-assets.native';
 import { LEVELS } from '@/game/levels/levels';
 import { createSeededRefill } from '@/game/gravity';
-import { createBoard, isAdjacent, swapCells } from '@/game/board';
+import { cloneBoard, cloneCell, createBoard, isAdjacent } from '@/game/board';
 import { getBombBlastCells } from '@/game/boosters/bomb';
 import { findRecommendedMove, type RecommendedMove } from '@/game/move-hints';
-import type { Board, EngineState, Position, ScoreEvent } from '@/game/types';
+import type { Board, BoardCell, CascadeTimelineEvent, EngineState, Position, RowClearTravelDirection } from '@/game/types';
 import { isBoardInteractionLocked } from '@/gameplay/interaction';
 import { calculateLevelLayout } from '@/gameplay/level-layout';
-import { createMatchSteps, resolveBombClearSequence, resolveHammerClearSequence, type MatchStep, type ResolvedState } from '@/gameplay/match-cascade';
+import {
+  getLineRocketClearDelayMs,
+  getFruityCrossClearDelayMs,
+  getMatchSoundDelayMs,
+  getSpecialWipeDelayMs,
+  getSpecialWipeMaxDelayMs,
+  SPECIAL_WIPE_PRE_SHRINK_MS,
+  SPECIAL_WIPE_SPLASH_DURATION_MS,
+} from '@/gameplay/match-vfx-timing';
+import {
+  createCascadeSequenceJobsFromTimeline,
+  resolveBombClearSequence,
+  resolveDirectSpecialPowerSequence,
+  resolveHammerClearSequence,
+  type CascadeSequenceJob,
+  type ResolvedState,
+} from '@/gameplay/match-cascade';
+import {
+  DIRECT_SPECIAL_POWER_TOOL_IDS,
+  getDirectSpecialPowerKind,
+  getLineRocketCellDelayMs,
+  type DirectSpecialPowerTool,
+} from '@/gameplay/direct-power-tools';
 import { getPlayableLevelId, useProgress } from '@/state/progress-store';
 import { useScreenWipe } from '@/state/screen-wipe';
 import { colors } from '@/theme/colors';
@@ -52,90 +75,38 @@ function createLevelState(seed: number): EngineState {
 }
 
 const TIMER_ENABLED = false;
-
-const SETTINGS_BUTTON_TOP = 40;
-const SETTINGS_BUTTON_RIGHT = 10;
-const SETTINGS_BUTTON_SIZE = 70;
-
-const HUD_TOP = 100;
-const HUD_WIDTH = 440;
-const HUD_HEIGHT = 125;
-const SCORE_BAR_TOP = 0;
-const SCORE_BAR_LEFT = 11;
-const SCORE_BAR_WIDTH = 476;
-const SCORE_BAR_HEIGHT = 108;
-const PROGRESS_BAR_TOP = 13;
-const PROGRESS_BAR_LEFT = 120;
-const PROGRESS_BAR_WIDTH = 200;
-const PROGRESS_BAR_HEIGHT = 82;
-const PROGRESS_FILL_TOP = PROGRESS_BAR_TOP + 31;
-const PROGRESS_FILL_LEFT = PROGRESS_BAR_LEFT +13;
-const PROGRESS_FILL_WIDTH = PROGRESS_BAR_WIDTH - 20;
-const PROGRESS_FILL_MAX_WIDTH = 173;
-const PROGRESS_FILL_HEIGHT = 20;
-const PROGRESS_FILL_MIN_WIDTH = 16;
-const PROGRESS_STAR_SIZE = 50;
-const PROGRESS_STAR_TOP = PROGRESS_FILL_TOP - 25;
-const PROGRESS_STAR_THRESHOLDS = [0.1, 0.75, 1] as const;
-
-// Score value is displayed using a sprite strip, so we need to define the dimensions and positioning of each digit.
-const SCORE_VALUE_TOP = 40;
-const SCORE_VALUE_LEFT = PROGRESS_BAR_LEFT + PROGRESS_BAR_WIDTH + 5;
-const SCORE_VALUE_DIGITS = 5;
-const SCORE_VALUE_NUMBER_HEIGHT = 20;
-const SCORE_VALUE_NUMBER_WIDTH = 15;
-const SCORE_VALUE_NUMBER_GAP = 2;
-
-const MOVES_BAR_TOP = -17;
-const MOVES_BAR_LEFT = 0;
-const MOVES_BAR_SIZE = 140;
 const MAX_MOVES = 30;
-const MOVES_NUMBER_TOP = 38;
-const MOVES_NUMBER_LEFT = 32;
-const MOVES_NUMBER_HEIGHT = 40;
-const MOVES_NUMBER_GAP = -3;
-const MOVES_NUMBER_WIDTH = 40;
-const MOVES_NUMBER_SPRITE_DIGITS = 10;
-
-// Grid tuning: change these when you want to move or resize the board.
-const GRID_SCREEN_PADDING = 0;
-const GRID_SIDE_MARGIN = 14;
-const GRID_TILE_GAP = 4;
-const GRID_BOARD_PADDING = 4;
-const GRID_FRAME_PADDING = 4;
-const GRID_INNER_FRAME_PADDING = 4;
-const GRID_CELL_AREA_PADDING = 4;
-const GRID_FRUIT_IMAGE_SCALE = 1.2;
 const MOVE_HINT_IDLE_DELAY_MS = 5000;
 const DEBUG_BOMB_BUTTON_ALWAYS_ACTIVE = true;
-const SETTINGS_PANEL_MAX_WIDTH = 520;
-const SETTINGS_PANEL_MAX_HEIGHT = 760;
-const SETTINGS_EXIT_BUTTON_SIZE = 64;
-const SETTINGS_EXIT_BUTTON_TOP = 170;
-const SETTINGS_EXIT_BUTTON_RIGHT = -5;
-const SETTINGS_MENU_BUTTON_WIDTH = 140;
-const SETTINGS_MENU_BUTTON_HEIGHT = 140;
-const SETTINGS_MENU_BUTTON_GAP = 18;
+
+function getSpecialWipePreShrinkMs(sourceTool?: 'lineRocket' | 'fruityCross') {
+  return sourceTool === 'fruityCross' ? SPECIAL_WIPE_PRE_SHRINK_MS : SPECIAL_WIPE_PRE_SHRINK_MS;
+}
+const DEBUG_SHOW_BOARD_TOUCH_BOUNDS = true;
+
+type BoardToolId = 'bomb' | 'hammer' | DirectSpecialPowerTool;
+
+function isDirectSpecialPowerTool(tool: BoardToolId): tool is DirectSpecialPowerTool {
+  return (DIRECT_SPECIAL_POWER_TOOL_IDS as readonly string[]).includes(tool);
+}
 
 function getTwoDigitMoves(moves: number) {
   return String(Math.max(0, Math.min(99, moves))).padStart(2, '0').split('').map(Number);
 }
 
-function getScoreDigits(score: number) {
-  return String(Math.max(0, Math.min(99999, score))).padStart(SCORE_VALUE_DIGITS, '0').split('').map(Number);
+function getScoreDigits(score: number, digitCount: number) {
+  return String(Math.max(0, Math.min(99999, score))).padStart(digitCount, '0').split('').map(Number);
 }
 
 type PendingSwapState = {
   key: number;
   from: Position;
   to: Position;
-  fromFruit: number;
-  toFruit: number;
+  fromCell: BoardCell;
+  toCell: BoardCell;
   accepted: boolean;
   result: ResolveSwapResult;
-  splash: MatchSplash | null;
-  matchSteps: MatchStep[];
-  matchedBoard: Board | null;
+  timelineJobs: CascadeSequenceJob[];
 };
 
 function toEngineState(state: ResolvedState): EngineState {
@@ -143,6 +114,60 @@ function toEngineState(state: ResolvedState): EngineState {
     board: state.board,
     score: state.score,
     movesUsed: state.movesUsed,
+  };
+}
+
+type ActiveTimelineState = {
+  activeJobIndex: number;
+  jobs: CascadeSequenceJob[];
+  state: ResolvedState;
+  completedPrimary: boolean;
+  completedOverlappedDrop: boolean;
+};
+
+function createCellSplashFromBoard(
+  key: number,
+  board: Board,
+  cells: Position[],
+  origin?: Position,
+  options: {
+    sourceTool?: 'lineRocket' | 'fruityCross';
+    rowTravelDirection?: RowClearTravelDirection;
+  } = {},
+): MatchSplash {
+  const columnCount = board[0]?.length ?? 0;
+  const preShrinkMs = origin ? getSpecialWipePreShrinkMs(options.sourceTool) : undefined;
+
+  return {
+    key,
+    chain: 1,
+    durationMs: origin ? SPECIAL_WIPE_SPLASH_DURATION_MS : undefined,
+    preShrinkMs,
+    cells: cells
+      .map((cell) => {
+        const source = board[cell.row]?.[cell.col];
+        if (!source) {
+          return null;
+        }
+
+        return {
+          row: cell.row,
+          col: cell.col,
+          fruit: source.fruit,
+          delayMs:
+            origin && options.sourceTool === 'lineRocket' && options.rowTravelDirection
+              ? getLineRocketClearDelayMs(
+                  getLineRocketCellDelayMs(cell, columnCount, options.rowTravelDirection),
+                  getSpecialWipePreShrinkMs(options.sourceTool),
+                )
+              : origin && options.sourceTool === 'fruityCross'
+                ? getFruityCrossClearDelayMs(getSpecialWipeDelayMs(cell, origin))
+              : origin
+                ? getSpecialWipeDelayMs(cell, origin)
+                : 0,
+        };
+      })
+      .filter((cell): cell is NonNullable<typeof cell> => cell !== null),
   };
 }
 
@@ -162,6 +187,7 @@ export default function LevelScreen() {
   const matchSoundPlayer = useAudioPlayer(soundRuntimeAssets.matchEffect, {
     keepAudioSessionActive: true,
   });
+  const matchSoundTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const completedLevelRef = useRef<number | null>(null);
   const [engineState, setEngineState] = useState<EngineState>(() => createLevelState(level.seed));
   const [selected, setSelected] = useState<Position | null>(null);
@@ -172,78 +198,92 @@ export default function LevelScreen() {
   const [matchDisplayBoard, setMatchDisplayBoard] = useState<Board | null>(null);
   const [dropAnimation, setDropAnimation] = useState<DropAnimation | null>(null);
   const [reshuffleAnimation, setReshuffleAnimation] = useState<ReshuffleAnimation | null>(null);
-  const [bombButtonChosen, setBombButtonChosen] = useState(false);
+  const [specialMergeAnimation, setSpecialMergeAnimation] = useState<SpecialMergeAnimation | null>(null);
+  const [specialWipeAnimation, setSpecialWipeAnimation] = useState<SpecialWipeAnimation | null>(null);
+  const [selectedBoardTool, setSelectedBoardTool] = useState<BoardToolId | null>(null);
   const [bombDropAnimation, setBombDropAnimation] = useState<BombDropAnimation | null>(null);
   const [pendingBombClear, setPendingBombClear] = useState<{ key: number; target: Position; board: Board } | null>(
     null,
   );
-  const [hammerButtonChosen, setHammerButtonChosen] = useState(false);
   const [hammerAnimation, setHammerAnimation] = useState<HammerAnimation | null>(null);
   const [pendingHammerClear, setPendingHammerClear] = useState<{ key: number; target: Position; board: Board } | null>(
     null,
   );
   const [recommendedMove, setRecommendedMove] = useState<RecommendedMove | null>(null);
-  const [pendingResolvedState, setPendingResolvedState] = useState<{
-    key: number;
-    activeStepIndex: number;
-    steps: MatchStep[];
-    state: ResolvedState;
-  } | null>(null);
-  const [pendingPostDropResolution, setPendingPostDropResolution] = useState<{
-    dropKey: number;
-    steps: MatchStep[];
-    state: ResolvedState;
-  } | null>(null);
-  const [pendingReshuffleResolution, setPendingReshuffleResolution] = useState<{
-    key: number;
-    state: ResolvedState;
+  const [activeTimeline, setActiveTimeline] = useState<ActiveTimelineState | null>(null);
+  const activeTimelineCompletion = useRef<{
+    activeJobIndex: number;
+    completedPrimary: boolean;
+    completedOverlappedDrop: boolean;
   } | null>(null);
   const [showBoosterRow, setShowBoosterRow] = useState(false);
   const [showSettingsOverlay, setShowSettingsOverlay] = useState(false);
   const settingsExitScale = useRef(new Animated.Value(1)).current;
   const settingsHomeScale = useRef(new Animated.Value(1)).current;
   const settingsMapScale = useRef(new Animated.Value(1)).current;
-  const moveDigits = getTwoDigitMoves(MAX_MOVES - engineState.movesUsed);
-  const scoreDigits = getScoreDigits(engineState.score);
-  const scoreProgress = Math.max(0, Math.min(1, engineState.score / level.targetScore));
-  const progressFillWidth =
-    scoreProgress <= 0
-      ? PROGRESS_FILL_MIN_WIDTH
-      : PROGRESS_FILL_MIN_WIDTH + (PROGRESS_FILL_MAX_WIDTH - PROGRESS_FILL_MIN_WIDTH) * scoreProgress;
   const levelLayout = calculateLevelLayout({
     screenWidth,
     screenHeight,
     rows: level.rows,
     cols: level.cols,
   });
+  const { boosters, grid, hud, settingsButton, settingsOverlay } = levelLayout;
   const canUseBombBooster = DEBUG_BOMB_BUTTON_ALWAYS_ACTIVE || progress.inventory.boosters.bomb > 0;
   const canUseHammerBooster = DEBUG_BOMB_BUTTON_ALWAYS_ACTIVE || progress.inventory.boosters.hammer > 0;
+  const moveDigits = getTwoDigitMoves(MAX_MOVES - engineState.movesUsed);
+  const scoreDigits = getScoreDigits(engineState.score, hud.scoreValue.digits);
+  const scoreProgress = Math.max(0, Math.min(1, engineState.score / level.targetScore));
+  const progressFillWidth =
+    scoreProgress <= 0
+      ? hud.progressFill.minWidth
+      : hud.progressFill.minWidth + (hud.progressFill.maxWidth - hud.progressFill.minWidth) * scoreProgress;
   const getProgressCheckpointX = (threshold: number) =>
-    PROGRESS_FILL_LEFT +
-    PROGRESS_FILL_MIN_WIDTH +
-    (PROGRESS_FILL_MAX_WIDTH - PROGRESS_FILL_MIN_WIDTH) * threshold;
+    hud.progressFill.left +
+    hud.progressFill.minWidth +
+    (hud.progressFill.maxWidth - hud.progressFill.minWidth) * threshold;
   const boardInteractionLocked = isBoardInteractionLocked({
     paused,
     hasPendingSwap: Boolean(pendingSwap),
     hasMatchSplash: Boolean(matchSplash),
     hasDropAnimation: Boolean(dropAnimation),
+    hasSpecialMergeAnimation: Boolean(specialMergeAnimation),
+    hasSpecialWipeAnimation: Boolean(specialWipeAnimation),
     hasPendingResolvedState:
-      Boolean(pendingResolvedState) ||
-      Boolean(pendingPostDropResolution) ||
+      Boolean(activeTimeline) ||
       Boolean(reshuffleAnimation) ||
-      Boolean(pendingReshuffleResolution) ||
       Boolean(bombDropAnimation) ||
       Boolean(pendingBombClear) ||
       Boolean(hammerAnimation) ||
       Boolean(pendingHammerClear),
   });
 
-  function playMatchSound() {
+  function clearPendingMatchSound() {
+    if (matchSoundTimer.current === null) {
+      return;
+    }
+
+    clearTimeout(matchSoundTimer.current);
+    matchSoundTimer.current = null;
+  }
+
+  function playMatchSound(delayMs = 0) {
+    clearPendingMatchSound();
+
     if (!progress.soundEnabled) {
       return;
     }
 
-    void matchSoundPlayer.seekTo(0).finally(() => matchSoundPlayer.play());
+    const play = () => {
+      matchSoundTimer.current = null;
+      void matchSoundPlayer.seekTo(0).finally(() => matchSoundPlayer.play());
+    };
+
+    if (delayMs <= 0) {
+      play();
+      return;
+    }
+
+    matchSoundTimer.current = setTimeout(play, delayMs);
   }
 
   function animateSettingsExit(value: number) {
@@ -276,7 +316,10 @@ export default function LevelScreen() {
     void warmGameplayAssets();
     const timer = setTimeout(() => setShowBoosterRow(true), 140);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      clearPendingMatchSound();
+    };
   }, []);
 
   useEffect(() => {
@@ -289,6 +332,7 @@ export default function LevelScreen() {
 
   useEffect(() => {
     completedLevelRef.current = null;
+    clearPendingMatchSound();
     setEngineState(createLevelState(level.seed));
     setSelected(null);
     setPaused(false);
@@ -298,16 +342,16 @@ export default function LevelScreen() {
     setMatchDisplayBoard(null);
     setDropAnimation(null);
     setReshuffleAnimation(null);
-    setBombButtonChosen(false);
+    setSpecialMergeAnimation(null);
+    setSpecialWipeAnimation(null);
+    setSelectedBoardTool(null);
     setBombDropAnimation(null);
     setPendingBombClear(null);
-    setHammerButtonChosen(false);
     setHammerAnimation(null);
     setPendingHammerClear(null);
     setRecommendedMove(null);
-    setPendingResolvedState(null);
-    setPendingPostDropResolution(null);
-    setPendingReshuffleResolution(null);
+    setActiveTimeline(null);
+    activeTimelineCompletion.current = null;
     setShowBoosterRow(false);
     setShowSettingsOverlay(false);
 
@@ -340,57 +384,299 @@ export default function LevelScreen() {
     return () => clearInterval(timer);
   }, [paused, timeLeft]);
 
-  function stageAcceptedMatch(swap: PendingSwapState) {
-    if (swap.matchSteps.length === 0) {
-      return;
-    }
-    const firstStep = swap.matchSteps[0];
-    if (matchSplash?.key === firstStep.splash.key) {
-      return;
-    }
-
-    unstable_batchedUpdates(() => {
-      setMatchDisplayBoard(firstStep.board);
-      setMatchSplash(firstStep.splash);
-      setPendingResolvedState({
-        key: swap.key,
-        activeStepIndex: 0,
-        steps: swap.matchSteps,
-        state: swap.result,
-      });
-      setPendingSwap((current) => (current?.key === swap.key ? null : current));
-    });
-    playMatchSound();
-  }
-
   function commitResolvedState(state: ResolvedState) {
-    const reshuffle = state.reshuffle;
-    if (reshuffle) {
-      const key = Date.now();
-      unstable_batchedUpdates(() => {
-        setDropAnimation(null);
-        setMatchDisplayBoard(reshuffle.before);
-        setReshuffleAnimation({
-          key,
-          board: reshuffle.after,
-        });
-        setPendingReshuffleResolution({
-          key,
-          state,
-        });
-        setPendingResolvedState(null);
-        setPendingPostDropResolution(null);
-      });
-      return;
-    }
-
+    activeTimelineCompletion.current = null;
     unstable_batchedUpdates(() => {
+      setMatchSplash(null);
       setDropAnimation(null);
+      setReshuffleAnimation(null);
+      setSpecialMergeAnimation(null);
+      setSpecialWipeAnimation(null);
       setEngineState(toEngineState(state));
-      setPendingResolvedState(null);
-      setPendingPostDropResolution(null);
+      setActiveTimeline(null);
       setMatchDisplayBoard(null);
     });
+  }
+
+  function getOverlappedDrop(job?: CascadeSequenceJob) {
+    if (!job || !('overlappedDrop' in job)) {
+      return undefined;
+    }
+
+    return job.overlappedDrop;
+  }
+
+  function hasOverlappedDrop(job?: CascadeSequenceJob) {
+    const overlappedDrop = getOverlappedDrop(job);
+    return Boolean(overlappedDrop && overlappedDrop.motions.length > 0);
+  }
+
+  function applyTimelineJob(job: CascadeSequenceJob) {
+    if (job.type === 'splash') {
+      const overlappedDrop = job.overlappedDrop;
+      unstable_batchedUpdates(() => {
+        setMatchDisplayBoard(overlappedDrop?.board ?? job.board);
+        setDropAnimation(
+          overlappedDrop
+            ? {
+                key: overlappedDrop.key,
+                motions: overlappedDrop.motions,
+                hiddenCells: overlappedDrop.hiddenCells,
+                startDelaysByColumn: overlappedDrop.startDelaysByColumn,
+              }
+            : null,
+        );
+        setReshuffleAnimation(null);
+        setSpecialMergeAnimation(null);
+        setSpecialWipeAnimation(null);
+        setMatchSplash(job.splash);
+      });
+      playMatchSound(getMatchSoundDelayMs(job.splash));
+      return;
+    }
+
+    if (job.type === 'drop') {
+      unstable_batchedUpdates(() => {
+        setMatchSplash(null);
+        setReshuffleAnimation(null);
+        setSpecialMergeAnimation(null);
+        setSpecialWipeAnimation(null);
+        setMatchDisplayBoard(job.board);
+        setDropAnimation({
+          key: job.key,
+          motions: job.motions,
+          hiddenCells: job.hiddenCells,
+          startDelaysByColumn: job.startDelaysByColumn,
+        });
+      });
+      return;
+    }
+
+    if (job.type === 'special-merge') {
+      unstable_batchedUpdates(() => {
+        setDropAnimation(null);
+        setReshuffleAnimation(null);
+        setSpecialWipeAnimation(null);
+        setMatchDisplayBoard(job.board);
+        setMatchSplash(job.companionSplash ?? null);
+        setSpecialMergeAnimation({
+          key: job.key,
+          board: job.board,
+          fruit: job.fruit,
+          sourceCells: job.sourceCells,
+          hiddenCells: job.hiddenCells,
+          targetCell: job.targetCell,
+          special: job.special,
+        });
+      });
+      return;
+    }
+
+    if (job.type === 'special-wipe') {
+      const columnCount = job.board[0]?.length ?? 0;
+      const lineRocketDirection = job.sourceTool === 'lineRocket' ? job.rowTravelDirection : undefined;
+      const maxDelayMs =
+        lineRocketDirection
+          ? job.cells.reduce(
+              (maxDelay, cell) =>
+                Math.max(
+                  maxDelay,
+                  getLineRocketClearDelayMs(
+                    getLineRocketCellDelayMs(cell, columnCount, lineRocketDirection),
+                    getSpecialWipePreShrinkMs(job.sourceTool),
+                  ),
+                ),
+              0,
+            )
+          : job.sourceTool === 'fruityCross'
+            ? getFruityCrossClearDelayMs(getSpecialWipeMaxDelayMs(job.cells, job.origin))
+            : getSpecialWipeMaxDelayMs(job.cells, job.origin);
+      const preDelayMs = getSpecialWipePreShrinkMs(job.sourceTool);
+      const splash =
+        job.sourceTool === 'fruityCross'
+          ? null
+          : createCellSplashFromBoard(job.key, job.board, job.cells, job.origin, {
+              sourceTool: job.sourceTool,
+              rowTravelDirection: job.rowTravelDirection,
+            });
+      unstable_batchedUpdates(() => {
+        setDropAnimation(null);
+        setReshuffleAnimation(null);
+        setSpecialMergeAnimation(null);
+        setMatchDisplayBoard(job.board);
+        setMatchSplash(splash);
+        setSpecialWipeAnimation({
+          key: job.key,
+          board: job.board,
+          origin: job.origin,
+          kind: job.kind,
+          cells: job.cells,
+          targetFruit: job.targetFruit,
+          sourceTool: job.sourceTool,
+          rowTravelDirection: job.rowTravelDirection,
+          preDelayMs,
+          durationMs: maxDelayMs + preDelayMs + SPECIAL_WIPE_SPLASH_DURATION_MS,
+        });
+      });
+      playMatchSound(getMatchSoundDelayMs(splash));
+      return;
+    }
+
+    if (job.type === 'reshuffle') {
+      unstable_batchedUpdates(() => {
+        setMatchSplash(null);
+        setDropAnimation(null);
+        setSpecialMergeAnimation(null);
+        setSpecialWipeAnimation(null);
+        setMatchDisplayBoard(job.before);
+        setReshuffleAnimation({
+          key: job.key,
+          board: job.after,
+        });
+      });
+    }
+  }
+
+  function getNextRenderableJobIndex(jobs: CascadeSequenceJob[], startIndex: number) {
+    for (let index = startIndex; index < jobs.length; index += 1) {
+      const job = jobs[index];
+      if (
+        job &&
+        (job.type === 'splash' ||
+          job.type === 'drop' ||
+          job.type === 'special-merge' ||
+          job.type === 'special-wipe' ||
+          job.type === 'reshuffle')
+      ) {
+        return index;
+      }
+    }
+
+    return -1;
+  }
+
+  function startTimeline(jobs: CascadeSequenceJob[], state: ResolvedState) {
+    const firstJobIndex = getNextRenderableJobIndex(jobs, 0);
+    if (firstJobIndex === -1) {
+      commitResolvedState(state);
+      return;
+    }
+
+    applyTimelineJob(jobs[firstJobIndex]);
+    activeTimelineCompletion.current = {
+      activeJobIndex: firstJobIndex,
+      completedPrimary: false,
+      completedOverlappedDrop: !hasOverlappedDrop(jobs[firstJobIndex]),
+    };
+    setActiveTimeline({
+      activeJobIndex: firstJobIndex,
+      jobs,
+      state,
+      completedPrimary: false,
+      completedOverlappedDrop: !hasOverlappedDrop(jobs[firstJobIndex]),
+    });
+  }
+
+  function advanceToNextTimelineJob(timeline: ActiveTimelineState) {
+    const nextJobIndex = getNextRenderableJobIndex(
+      timeline.jobs,
+      timeline.activeJobIndex + 1,
+    );
+    const nextJob = nextJobIndex === -1 ? undefined : timeline.jobs[nextJobIndex];
+
+    if (!nextJob) {
+      activeTimelineCompletion.current = null;
+      commitResolvedState(timeline.state);
+      return true;
+    }
+
+    applyTimelineJob(nextJob);
+    activeTimelineCompletion.current = {
+      activeJobIndex: nextJobIndex,
+      completedPrimary: false,
+      completedOverlappedDrop: !hasOverlappedDrop(nextJob),
+    };
+    setActiveTimeline({
+      activeJobIndex: nextJobIndex,
+      jobs: timeline.jobs,
+      state: timeline.state,
+      completedPrimary: false,
+      completedOverlappedDrop: !hasOverlappedDrop(nextJob),
+    });
+    return true;
+  }
+
+  function advanceTimeline(jobType: CascadeSequenceJob['type'], key: number) {
+    if (!activeTimeline) {
+      return false;
+    }
+
+    const activeJob = activeTimeline.jobs[activeTimeline.activeJobIndex];
+    if (!activeJob || activeJob.type !== jobType || activeJob.key !== key) {
+      return false;
+    }
+
+    const completion = activeTimelineCompletion.current;
+    const completedOverlappedDrop =
+      completion && completion.activeJobIndex === activeTimeline.activeJobIndex
+        ? completion.completedOverlappedDrop
+        : activeTimeline.completedOverlappedDrop;
+
+    if (hasOverlappedDrop(activeJob) && !completedOverlappedDrop) {
+      activeTimelineCompletion.current = {
+        activeJobIndex: activeTimeline.activeJobIndex,
+        completedPrimary: true,
+        completedOverlappedDrop,
+      };
+      setActiveTimeline((current) =>
+        current && current.activeJobIndex === activeTimeline.activeJobIndex
+          ? {
+              ...current,
+              completedPrimary: true,
+            }
+          : current,
+      );
+      return true;
+    }
+
+    return advanceToNextTimelineJob(activeTimeline);
+  }
+
+  function completeOverlappedDrop(key: number) {
+    if (!activeTimeline) {
+      return false;
+    }
+
+    const activeJob = activeTimeline.jobs[activeTimeline.activeJobIndex];
+    const overlappedDrop = getOverlappedDrop(activeJob);
+    if (!overlappedDrop || overlappedDrop.key !== key) {
+      return false;
+    }
+
+    const completion = activeTimelineCompletion.current;
+    const completedPrimary =
+      completion && completion.activeJobIndex === activeTimeline.activeJobIndex
+        ? completion.completedPrimary
+        : activeTimeline.completedPrimary;
+
+    if (completedPrimary) {
+      return advanceToNextTimelineJob(activeTimeline);
+    }
+
+    activeTimelineCompletion.current = {
+      activeJobIndex: activeTimeline.activeJobIndex,
+      completedPrimary,
+      completedOverlappedDrop: true,
+    };
+    setActiveTimeline((current) =>
+      current && current.activeJobIndex === activeTimeline.activeJobIndex
+        ? {
+            ...current,
+            completedOverlappedDrop: true,
+          }
+        : current,
+    );
+    return true;
   }
 
   useEffect(() => {
@@ -431,35 +717,61 @@ export default function LevelScreen() {
   }, [engineState.score, level, screenWipe, timeLeft]);
 
   function beginSwap(from: Position, to: Position) {
-    const scoreEvents: ScoreEvent[] = [];
+    const timelineEvents: CascadeTimelineEvent[] = [];
     const refillSeed = level.seed + engineState.movesUsed * 101 + from.row * 17 + from.col * 31 + to.row * 43 + to.col * 59;
     const result = resolveSwap(
       engineState,
       { from, to },
       {
         refill: createSeededRefill({ seed: refillSeed, fruitTypes: level.fruitTypes }),
-        onScore: (event) => scoreEvents.push(event),
+        onTimelineEvent: (event) => timelineEvents.push(event),
         reshuffle: (board: Board) => createBoard({ seed: level.seed + engineState.movesUsed + 99 }),
       },
     );
     const swapKey = Date.now();
-    const matchSteps = result.accepted ? createMatchSteps(swapKey, scoreEvents) : [];
-    const splash = matchSteps[0]?.splash ?? null;
-    const matchedBoard = result.accepted ? swapCells(engineState.board, from, to) : null;
+    const timelineJobs = result.accepted ? createCascadeSequenceJobsFromTimeline(timelineEvents) : [];
 
     setPendingSwap({
       key: swapKey,
       from,
       to,
-      fromFruit: engineState.board[from.row][from.col],
-      toFruit: engineState.board[to.row][to.col],
+      fromCell: cloneCell(engineState.board[from.row][from.col]),
+      toCell: cloneCell(engineState.board[to.row][to.col]),
       accepted: result.accepted,
       result,
-      splash,
-      matchSteps,
-      matchedBoard,
+      timelineJobs,
     });
     setSelected(null);
+  }
+
+  function activateDirectSpecialPower(tool: DirectSpecialPowerTool, target: Position) {
+    const key = Date.now();
+    const refillSeed = level.seed + engineState.movesUsed * 101 + target.row * 29 + target.col * 47 + key;
+    const cascadeRefillSeed = level.seed + engineState.movesUsed * 101 + target.row * 31 + target.col * 53 + key + 512;
+    const sequence = resolveDirectSpecialPowerSequence({
+      key,
+      target,
+      tool,
+      kind: getDirectSpecialPowerKind(tool),
+      board: engineState.board,
+      engineState,
+      refill: createSeededRefill({ seed: refillSeed, fruitTypes: level.fruitTypes }),
+      cascadeRefill: createSeededRefill({ seed: cascadeRefillSeed, fruitTypes: level.fruitTypes }),
+      reshuffle: (board: Board) => createBoard({ seed: level.seed + engineState.movesUsed + 499 }),
+    });
+
+    unstable_batchedUpdates(() => {
+      setSelectedBoardTool(null);
+      setSelected(null);
+      setRecommendedMove(null);
+      setDropAnimation(null);
+      setReshuffleAnimation(null);
+      setSpecialMergeAnimation(null);
+      setSpecialWipeAnimation(null);
+      setActiveTimeline(null);
+      activeTimelineCompletion.current = null;
+    });
+    startTimeline(sequence.jobs, sequence.state);
   }
 
   function handleSelect(position: Position) {
@@ -468,9 +780,9 @@ export default function LevelScreen() {
     }
     setRecommendedMove(null);
 
-    if (bombButtonChosen) {
+    if (selectedBoardTool === 'bomb') {
       if (!canUseBombBooster) {
-        setBombButtonChosen(false);
+        setSelectedBoardTool(null);
         setSelected(null);
         return;
       }
@@ -482,26 +794,49 @@ export default function LevelScreen() {
       }
       setBombDropAnimation({ key, target: position, blastCells });
       setPendingBombClear({ key, target: position, board: engineState.board });
-      setBombButtonChosen(false);
+      setSelectedBoardTool(null);
       setSelected(null);
       return;
     }
 
-    if (hammerButtonChosen) {
+    if (selectedBoardTool === 'hammer') {
       if (!canUseHammerBooster) {
-        setHammerButtonChosen(false);
+        setSelectedBoardTool(null);
         setSelected(null);
         return;
       }
 
-      const key = Date.now();
       if (!DEBUG_BOMB_BUTTON_ALWAYS_ACTIVE) {
         progress.consumeBooster('hammer');
       }
-      setHammerAnimation({ key, target: position });
-      setPendingHammerClear({ key, target: position, board: engineState.board });
-      setHammerButtonChosen(false);
+      setEngineState((current) => {
+        const board = cloneBoard(current.board);
+        const source = board[position.row]?.[position.col];
+        if (!source) {
+          return current;
+        }
+
+        board[position.row][position.col] = {
+          type: 'special',
+          fruit: source.fruit,
+          kind: 'cross-wipe',
+          powerTier: 5,
+        };
+
+        return {
+          ...current,
+          board,
+        };
+      });
+      setSelectedBoardTool(null);
+      setHammerAnimation(null);
+      setPendingHammerClear(null);
       setSelected(null);
+      return;
+    }
+
+    if (selectedBoardTool && isDirectSpecialPowerTool(selectedBoardTool)) {
+      activateDirectSpecialPower(selectedBoardTool, position);
       return;
     }
 
@@ -528,10 +863,9 @@ export default function LevelScreen() {
       return;
     }
 
-    setBombButtonChosen(false);
+    setSelectedBoardTool(null);
     setBombDropAnimation(null);
     setPendingBombClear(null);
-    setHammerButtonChosen(false);
     setHammerAnimation(null);
     setPendingHammerClear(null);
     setRecommendedMove(null);
@@ -545,8 +879,10 @@ export default function LevelScreen() {
     }
 
     if (pendingSwap.accepted) {
-      if (pendingSwap.matchSteps.length > 0) {
-        stageAcceptedMatch(pendingSwap);
+      if (pendingSwap.timelineJobs.length > 0) {
+        const jobs = pendingSwap.timelineJobs;
+        setPendingSwap((current) => (current?.key === pendingSwap.key ? null : current));
+        startTimeline(jobs, pendingSwap.result);
         return;
       } else {
         commitResolvedState(pendingSwap.result);
@@ -557,89 +893,55 @@ export default function LevelScreen() {
   }
 
   function handleMatchSplashComplete(key: number) {
-    if (!pendingResolvedState) {
+    if (!activeTimeline) {
       setMatchSplash((current) => (current?.key === key ? null : current));
       return;
     }
-
-    const activeStep = pendingResolvedState.steps[pendingResolvedState.activeStepIndex];
-    if (activeStep?.splash.key !== key) {
+    const activeJob = activeTimeline.jobs[activeTimeline.activeJobIndex];
+    if (activeJob?.type === 'special-merge' && activeJob.key === key) {
+      setMatchSplash((current) => (current?.key === key ? null : current));
       return;
     }
-
-    unstable_batchedUpdates(() => {
-      setMatchDisplayBoard(activeStep.settledBoard);
-      setDropAnimation({
-        key,
-        motions: activeStep.dropMotions,
-      });
-      setMatchSplash(null);
-    });
+    if (activeJob?.type === 'special-wipe' && activeJob.key === key) {
+      setMatchSplash((current) => (current?.key === key ? null : current));
+      return;
+    }
+    setMatchSplash((current) => (current?.key === key ? null : current));
+    advanceTimeline('splash', key);
   }
 
   function handleDropAnimationComplete(key: number) {
-    if (pendingPostDropResolution?.dropKey === key) {
-      const firstStep = pendingPostDropResolution.steps[0];
-      if (!firstStep) {
-        commitResolvedState(pendingPostDropResolution.state);
-        return;
-      }
-
-      unstable_batchedUpdates(() => {
-        setDropAnimation(null);
-        setMatchDisplayBoard(firstStep.board);
-        setMatchSplash(firstStep.splash);
-        setPendingResolvedState({
-          key: firstStep.splash.key,
-          activeStepIndex: 0,
-          steps: pendingPostDropResolution.steps,
-          state: pendingPostDropResolution.state,
-        });
-        setPendingPostDropResolution(null);
-      });
-      playMatchSound();
+    setDropAnimation((current) => (current?.key === key ? null : current));
+    if (!activeTimeline) {
       return;
     }
-
-    if (!pendingResolvedState) {
-      setDropAnimation((current) => (current?.key === key ? null : current));
+    if (completeOverlappedDrop(key)) {
       return;
     }
-
-    const activeStep = pendingResolvedState.steps[pendingResolvedState.activeStepIndex];
-    if (activeStep?.splash.key !== key) {
-      return;
-    }
-
-    const nextStepIndex = pendingResolvedState.activeStepIndex + 1;
-    const nextStep = pendingResolvedState.steps[nextStepIndex];
-    if (nextStep) {
-      unstable_batchedUpdates(() => {
-        setDropAnimation(null);
-        setMatchDisplayBoard(nextStep.board);
-        setMatchSplash(nextStep.splash);
-        playMatchSound();
-        setPendingResolvedState((current) =>
-          current?.key === pendingResolvedState.key ? { ...current, activeStepIndex: nextStepIndex } : current,
-        );
-      });
-      return;
-    }
-
-    commitResolvedState(pendingResolvedState.state);
+    advanceTimeline('drop', key);
   }
 
   function handleReshuffleAnimationComplete(key: number) {
-    if (pendingReshuffleResolution?.key !== key) {
+    if (!activeTimeline) {
       return;
     }
+    advanceTimeline('reshuffle', key);
+  }
 
-    unstable_batchedUpdates(() => {
-      setEngineState(toEngineState(pendingReshuffleResolution.state));
-      setReshuffleAnimation(null);
-      setPendingReshuffleResolution(null);
-      setMatchDisplayBoard(null);
-    });
+  function handleSpecialMergeComplete(key: number) {
+    if (!activeTimeline) {
+      setSpecialMergeAnimation((current) => (current?.key === key ? null : current));
+      return;
+    }
+    advanceTimeline('special-merge', key);
+  }
+
+  function handleSpecialWipeComplete(key: number) {
+    setSpecialWipeAnimation((current) => (current?.key === key ? null : current));
+    if (!activeTimeline) {
+      return;
+    }
+    advanceTimeline('special-wipe', key);
   }
 
   function resolveBombClear(key: number) {
@@ -664,14 +966,13 @@ export default function LevelScreen() {
     unstable_batchedUpdates(() => {
       setBombDropAnimation(null);
       setPendingBombClear(null);
-      setMatchDisplayBoard(pendingBombClear.board);
-      setPendingPostDropResolution({
-        dropKey: key,
-        steps: sequence.steps,
-        state: sequence.state,
-      });
-      setDropAnimation(sequence.dropAnimation);
+      setActiveTimeline(null);
+      activeTimelineCompletion.current = null;
     });
+    startTimeline(
+      sequence.jobs,
+      sequence.state,
+    );
     playMatchSound();
   }
 
@@ -697,31 +998,65 @@ export default function LevelScreen() {
     unstable_batchedUpdates(() => {
       setHammerAnimation(null);
       setPendingHammerClear(null);
-      setMatchDisplayBoard(pendingHammerClear.board);
-      setPendingPostDropResolution({
-        dropKey: key,
-        steps: sequence.steps,
-        state: sequence.state,
-      });
-      setDropAnimation(sequence.dropAnimation);
+      setActiveTimeline(null);
+      activeTimelineCompletion.current = null;
     });
+    startTimeline(
+      sequence.jobs,
+      sequence.state,
+    );
     playMatchSound();
   }
+
+  const boardToolButtons: Array<{
+    id: BoardToolId;
+    label: string;
+    source: number;
+    disabled?: boolean;
+  }> = [
+    {
+      id: 'bomb',
+      label: 'Bomb booster',
+      source: uiRuntimeAssets.gameplayBombButton,
+      disabled: !canUseBombBooster,
+    },
+    {
+      id: 'hammer',
+      label: 'Hammer booster',
+      source: uiRuntimeAssets.gameplayHammerButton,
+      disabled: !canUseHammerBooster,
+    },
+    {
+      id: 'lineRocket',
+      label: 'LineRocket',
+      source: uiRuntimeAssets.gameplayLineRocketButton,
+    },
+    {
+      id: 'fruityCross',
+      label: 'FruityCross',
+      source: uiRuntimeAssets.gameplayFruityCrossButton,
+    },
+    {
+      id: 'lightningFruits',
+      label: 'LightningFruits',
+      source: uiRuntimeAssets.gameplayLightningFruitsButton,
+    },
+  ];
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.cream }}>
       <ImageBackground source={backgroundRuntimeAssets.gameplay} fadeDuration={0} resizeMode="cover" style={{ flex: 1 }}>
       <Pressable
         onPress={() => setShowSettingsOverlay(true)}
-        style={({ pressed }) => ({
-          position: 'absolute',
-          top: SETTINGS_BUTTON_TOP,
-          right: SETTINGS_BUTTON_RIGHT,
-          width: SETTINGS_BUTTON_SIZE,
-          height: SETTINGS_BUTTON_SIZE,
-          zIndex: 5,
-          opacity: pressed ? 0.82 : 1,
-          transform: [{ scale: pressed ? 0.94 : 1 }],
+          style={({ pressed }) => ({
+            position: 'absolute',
+            top: settingsButton.top,
+            right: settingsButton.right,
+            width: settingsButton.size,
+            height: settingsButton.size,
+            zIndex: 5,
+            opacity: pressed ? 0.82 : 1,
+            transform: [{ scale: pressed ? 0.94 : 1 }],
         })}
       >
         <Image
@@ -735,13 +1070,11 @@ export default function LevelScreen() {
         pointerEvents="none"
         style={{
           position: 'absolute',
-          top: HUD_TOP,
-          left: levelLayout.hudLeft,
-          width: HUD_WIDTH,
-          height: HUD_HEIGHT,
+          top: hud.top,
+          left: hud.left,
+          width: hud.width,
+          height: hud.height,
           zIndex: 2,
-          transform: [{ scale: levelLayout.hudScale }],
-          transformOrigin: 'top left',
         }}
       >
         <Image
@@ -750,10 +1083,10 @@ export default function LevelScreen() {
           resizeMode="stretch"
           style={{
             position: 'absolute',
-            top: SCORE_BAR_TOP,
-            left: SCORE_BAR_LEFT,
-            width: SCORE_BAR_WIDTH,
-            height: SCORE_BAR_HEIGHT,
+            top: hud.scoreBar.top,
+            left: hud.scoreBar.left,
+            width: hud.scoreBar.width,
+            height: hud.scoreBar.height,
             zIndex: 1,
           }}
         />
@@ -763,21 +1096,21 @@ export default function LevelScreen() {
           resizeMode="stretch"
           style={{
             position: 'absolute',
-            top: PROGRESS_BAR_TOP,
-            left: PROGRESS_BAR_LEFT,
-            width: PROGRESS_BAR_WIDTH,
-            height: PROGRESS_BAR_HEIGHT,
+            top: hud.progressBar.top,
+            left: hud.progressBar.left,
+            width: hud.progressBar.width,
+            height: hud.progressBar.height,
             zIndex: 2,
           }}
         />
         <View
           style={{
             position: 'absolute',
-            top: PROGRESS_FILL_TOP,
-            left: PROGRESS_FILL_LEFT,
+            top: hud.progressFill.top,
+            left: hud.progressFill.left,
             width: progressFillWidth,
-            height: PROGRESS_FILL_HEIGHT,
-            borderRadius: PROGRESS_FILL_HEIGHT / 2,
+            height: hud.progressFill.height,
+            borderRadius: hud.progressFill.height / 2,
             overflow: 'hidden',
             zIndex: 3,
           }}
@@ -787,12 +1120,12 @@ export default function LevelScreen() {
             fadeDuration={0}
             resizeMode="stretch"
             style={{
-              width: PROGRESS_FILL_WIDTH,
-              height: PROGRESS_FILL_HEIGHT,
+              width: hud.progressFill.width,
+              height: hud.progressFill.height,
             }}
           />
         </View>
-        {PROGRESS_STAR_THRESHOLDS.map((threshold) => (
+        {hud.progressStars.thresholds.map((threshold) => (
           <Image
             key={threshold}
             source={scoreProgress >= threshold ? barRuntimeAssets.fullStar : barRuntimeAssets.emptyStar}
@@ -800,10 +1133,10 @@ export default function LevelScreen() {
             resizeMode="contain"
             style={{
               position: 'absolute',
-              top: PROGRESS_STAR_TOP,
-              left: getProgressCheckpointX(threshold) - PROGRESS_STAR_SIZE / 2,
-              width: PROGRESS_STAR_SIZE,
-              height: PROGRESS_STAR_SIZE,
+              top: hud.progressStars.top,
+              left: getProgressCheckpointX(threshold) - hud.progressStars.size / 2,
+              width: hud.progressStars.size,
+              height: hud.progressStars.size,
               zIndex: 4,
             }}
           />
@@ -811,8 +1144,8 @@ export default function LevelScreen() {
         <View
           style={{
             position: 'absolute',
-            top: SCORE_VALUE_TOP,
-            left: SCORE_VALUE_LEFT,
+            top: hud.scoreValue.top,
+            left: hud.scoreValue.left,
             zIndex: 5,
             flexDirection: 'row',
             alignItems: 'center',
@@ -820,11 +1153,11 @@ export default function LevelScreen() {
         >
           <ScoreReelDigits
             digits={scoreDigits}
-            digitHeight={SCORE_VALUE_NUMBER_HEIGHT}
-            digitWidth={SCORE_VALUE_NUMBER_WIDTH}
-            digitGap={SCORE_VALUE_NUMBER_GAP}
+            digitHeight={hud.scoreValue.numberHeight}
+            digitWidth={hud.scoreValue.numberWidth}
+            digitGap={hud.scoreValue.numberGap}
             sprite={scoreNumberSpriteAsset}
-            spriteDigits={MOVES_NUMBER_SPRITE_DIGITS}
+            spriteDigits={hud.scoreValue.spriteDigits}
           />
         </View>
         <Image
@@ -833,18 +1166,18 @@ export default function LevelScreen() {
           resizeMode="contain"
           style={{
             position: 'absolute',
-            top: MOVES_BAR_TOP,
-            left: MOVES_BAR_LEFT,
-            width: MOVES_BAR_SIZE,
-            height: MOVES_BAR_SIZE,
+            top: hud.movesBar.top,
+            left: hud.movesBar.left,
+            width: hud.movesBar.size,
+            height: hud.movesBar.size,
             zIndex: 5,
           }}
         />
         <View
           style={{
             position: 'absolute',
-            top: MOVES_NUMBER_TOP,
-            left: MOVES_NUMBER_LEFT,
+            top: hud.movesValue.top,
+            left: hud.movesValue.left,
             zIndex: 6,
             flexDirection: 'row',
             alignItems: 'center',
@@ -854,9 +1187,9 @@ export default function LevelScreen() {
             <View
               key={index}
               style={{
-                width: MOVES_NUMBER_WIDTH,
-                height: MOVES_NUMBER_HEIGHT,
-                marginLeft: index === 0 ? 0 : MOVES_NUMBER_GAP,
+                width: hud.movesValue.width,
+                height: hud.movesValue.height,
+                marginLeft: index === 0 ? 0 : hud.movesValue.gap,
                 overflow: 'hidden',
               }}
             >
@@ -865,9 +1198,9 @@ export default function LevelScreen() {
                 fadeDuration={0}
                 resizeMode="stretch"
                 style={{
-                  width: MOVES_NUMBER_WIDTH * MOVES_NUMBER_SPRITE_DIGITS,
-                  height: MOVES_NUMBER_HEIGHT,
-                  transform: [{ translateX: -digit * MOVES_NUMBER_WIDTH }],
+                  width: hud.movesValue.width * hud.movesValue.spriteDigits,
+                  height: hud.movesValue.height,
+                  transform: [{ translateX: -digit * hud.movesValue.width }],
                 }}
               />
             </View>
@@ -876,16 +1209,18 @@ export default function LevelScreen() {
       </View>
       <View
         style={{
-          flex: 1,
-          padding: GRID_SCREEN_PADDING,
-          paddingBottom: levelLayout.gridBottomOffset,
-          justifyContent: 'flex-end',
+          position: 'absolute',
+          top: grid.boardTop,
+          left: 0,
+          right: 0,
+          padding: grid.screenPadding,
           alignItems: 'center',
+          zIndex: 1,
         }}
       >
         <View
           style={{
-            gap: levelLayout.boosterButtonGap,
+            gap: boosters.gap,
             alignItems: 'center',
           }}
         >
@@ -893,7 +1228,7 @@ export default function LevelScreen() {
             style={{
               borderRadius: 28,
               backgroundColor: colors.peachDeep,
-              padding: GRID_FRAME_PADDING,
+              padding: grid.framePadding,
               shadowColor: colors.shadow,
               shadowOpacity: 0.2,
               shadowRadius: 18,
@@ -906,7 +1241,7 @@ export default function LevelScreen() {
                 width: '100%',
                 borderRadius: 28,
                 backgroundColor: colors.coralDeep,
-                padding: GRID_INNER_FRAME_PADDING,
+                padding: grid.innerFramePadding,
               }}
             >
               <View
@@ -914,7 +1249,7 @@ export default function LevelScreen() {
                   width: '100%',
           borderRadius: 24,
                   backgroundColor: colors.coral,
-                  padding: GRID_CELL_AREA_PADDING,
+                  padding: grid.cellAreaPadding,
                 }}
               >
                 <GameBoard
@@ -925,22 +1260,27 @@ export default function LevelScreen() {
                 matchSplash={matchSplash}
                 dropAnimation={dropAnimation}
                 reshuffleAnimation={reshuffleAnimation}
+                specialMergeAnimation={specialMergeAnimation}
+                specialWipeAnimation={specialWipeAnimation}
                 bombDropAnimation={bombDropAnimation}
                 bombDropSource={uiRuntimeAssets.gameplayBombDrop}
                 hammerAnimation={hammerAnimation}
                 hammerSource={uiRuntimeAssets.gameplayHammerButton}
                 hint={recommendedMove}
-                  maxWidth={levelLayout.boardMaxWidth}
-                  horizontalMargin={GRID_SIDE_MARGIN}
-                  tileGap={GRID_TILE_GAP}
-                  boardPadding={GRID_BOARD_PADDING}
-                  fruitImageScale={GRID_FRUIT_IMAGE_SCALE}
+                  maxWidth={grid.boardMaxWidth}
+                  horizontalMargin={grid.sideMargin}
+                  tileGap={grid.tileGap}
+                  boardPadding={grid.boardPadding}
+                  fruitImageScale={grid.fruitImageScale}
+                  showTouchBounds={DEBUG_SHOW_BOARD_TOUCH_BOUNDS}
                   onSelect={handleSelect}
                   onSwipe={handleSwipe}
                 onSwapAnimationEnd={handleSwapAnimationEnd}
                 onMatchSplashComplete={handleMatchSplashComplete}
                 onDropAnimationComplete={handleDropAnimationComplete}
                 onReshuffleAnimationComplete={handleReshuffleAnimationComplete}
+                onSpecialMergeComplete={handleSpecialMergeComplete}
+                onSpecialWipeComplete={handleSpecialWipeComplete}
                 onBombDropAnimationComplete={resolveBombClear}
                 onHammerAnimationComplete={resolveHammerClear}
               />
@@ -951,80 +1291,52 @@ export default function LevelScreen() {
             <View
               style={{
                 flexDirection: 'row',
-                gap: levelLayout.boosterButtonGap ?? 16,
+                gap: boosters.gap,
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
             >
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Bomb booster"
-              onPress={() => {
-                if (boardInteractionLocked) {
-                  return;
-                }
-                if (!canUseBombBooster) {
-                  setBombButtonChosen(false);
-                  return;
-                }
-                setSelected(null);
-                setRecommendedMove(null);
-                setHammerButtonChosen(false);
-                setBombButtonChosen((current) => !current);
-              }}
-              style={({ pressed }) => ({
-                width: levelLayout.boosterButtonSize,
-                height: levelLayout.boosterButtonSize,
-                borderRadius: levelLayout.boosterButtonSize / 2,
-                overflow: 'hidden',
-                borderWidth: bombButtonChosen ? 4 : 0,
-                borderColor: 'rgba(255, 248, 135, 0.95)',
-                opacity: !canUseBombBooster ? 0.42 : pressed ? 0.86 : 1,
-                transform: [{ scale: pressed || bombButtonChosen ? 0.94 : 1 }],
-              })}
-            >
-              <Image
-                source={uiRuntimeAssets.gameplayBombButton}
-                fadeDuration={0}
-                resizeMode="contain"
-                style={{ width: '100%', height: '100%' }}
-              />
-            </Pressable>
+              {boardToolButtons.map((tool) => {
+                const chosen = selectedBoardTool === tool.id;
+                const disabled = tool.disabled ?? false;
 
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Hammer booster"
-              onPress={() => {
-                if (boardInteractionLocked) {
-                  return;
-                }
-                if (!canUseHammerBooster) {
-                  setHammerButtonChosen(false);
-                  return;
-                }
-                setSelected(null);
-                setRecommendedMove(null);
-                setBombButtonChosen(false);
-                setHammerButtonChosen((current) => !current);
-              }}
-              style={({ pressed }) => ({
-                width: levelLayout.boosterButtonSize,
-                height: levelLayout.boosterButtonSize,
-                borderRadius: levelLayout.boosterButtonSize / 2,
-                overflow: 'hidden',
-                borderWidth: hammerButtonChosen ? 4 : 0,
-                borderColor: 'rgba(255, 248, 135, 0.95)',
-                opacity: !canUseHammerBooster ? 0.42 : pressed ? 0.86 : 1,
-                transform: [{ scale: pressed || hammerButtonChosen ? 0.94 : 1 }],
+                return (
+                  <Pressable
+                    key={tool.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={tool.label}
+                    onPress={() => {
+                      if (boardInteractionLocked) {
+                        return;
+                      }
+                      if (disabled) {
+                        setSelectedBoardTool((current) => (current === tool.id ? null : current));
+                        return;
+                      }
+                      setSelected(null);
+                      setRecommendedMove(null);
+                      setSelectedBoardTool((current) => (current === tool.id ? null : tool.id));
+                    }}
+                    style={({ pressed }) => ({
+                      width: boosters.buttonSize,
+                      height: boosters.buttonSize,
+                      borderRadius: boosters.buttonSize / 2,
+                      overflow: 'hidden',
+                      borderWidth: chosen ? 4 : 0,
+                      borderColor: 'rgba(255, 248, 135, 0.95)',
+                      opacity: disabled ? 0.42 : pressed ? 0.86 : 1,
+                      transform: [{ scale: pressed || chosen ? 0.94 : 1 }],
+                    })}
+                  >
+                    <Image
+                      source={tool.source}
+                      fadeDuration={0}
+                      resizeMode="contain"
+                      style={{ width: '100%', height: '100%' }}
+                    />
+                  </Pressable>
+                );
               })}
-            >
-              <Image
-                source={uiRuntimeAssets.gameplayHammerButton}
-                fadeDuration={0}
-                resizeMode="contain"
-                style={{ width: '100%', height: '100%' }}
-              />
-            </Pressable>
             </View>
           ) : null}
         </View>
@@ -1076,8 +1388,8 @@ export default function LevelScreen() {
         >
           <View
             style={{
-              width: Math.min(screenWidth * 0.88, SETTINGS_PANEL_MAX_WIDTH),
-              height: Math.min(screenHeight * 0.72, SETTINGS_PANEL_MAX_HEIGHT),
+              width: settingsOverlay.width,
+              height: settingsOverlay.height,
               justifyContent: 'center',
               alignItems: 'center',
             }}
@@ -1107,7 +1419,7 @@ export default function LevelScreen() {
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: SETTINGS_MENU_BUTTON_GAP,
+                  gap: settingsOverlay.menuButtonGap,
                 }}
               >
                 <Pressable
@@ -1120,8 +1432,8 @@ export default function LevelScreen() {
                   onPressIn={() => animateSettingsMenu(settingsHomeScale, 0.92)}
                   onPressOut={() => animateSettingsMenu(settingsHomeScale, 1)}
                   style={{
-                    width: SETTINGS_MENU_BUTTON_WIDTH,
-                    height: SETTINGS_MENU_BUTTON_HEIGHT,
+                    width: settingsOverlay.menuButtonWidth,
+                    height: settingsOverlay.menuButtonHeight,
                   }}
                 >
                   <Animated.Image
@@ -1145,8 +1457,8 @@ export default function LevelScreen() {
                   onPressIn={() => animateSettingsMenu(settingsMapScale, 0.92)}
                   onPressOut={() => animateSettingsMenu(settingsMapScale, 1)}
                   style={{
-                    width: SETTINGS_MENU_BUTTON_WIDTH,
-                    height: SETTINGS_MENU_BUTTON_HEIGHT,
+                    width: settingsOverlay.menuButtonWidth,
+                    height: settingsOverlay.menuButtonHeight,
                   }}
                 >
                   <Animated.Image
@@ -1170,10 +1482,10 @@ export default function LevelScreen() {
               onPressOut={() => animateSettingsExit(1)}
               style={{
                 position: 'absolute',
-                top: SETTINGS_EXIT_BUTTON_TOP,
-                right: SETTINGS_EXIT_BUTTON_RIGHT,
-                width: SETTINGS_EXIT_BUTTON_SIZE,
-                height: SETTINGS_EXIT_BUTTON_SIZE,
+                top: settingsOverlay.exitButtonTop,
+                right: settingsOverlay.exitButtonRight,
+                width: settingsOverlay.exitButtonSize,
+                height: settingsOverlay.exitButtonSize,
                 zIndex: 2,
               }}
             >

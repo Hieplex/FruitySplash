@@ -10,8 +10,8 @@ const OPEN_DURATION_MS = 360;
 const TEXT_JUMP_DURATION_MS = 180;
 const TEXT_SIZE = 46;
 const TEXT_OUTLINE_OFFSET = 3;
-const TEXT_BOTTOM_PANEL_OFFSET = 85;
-const TEXT_TOP_PANEL_OFFSET = 74;
+const TEXT_BOTTOM_PANEL_TOP_OFFSET = 22;
+const TEXT_TOP_PANEL_BOTTOM_OFFSET = 18;
 
 export type ScreenWipePhase = 'hidden' | 'closed' | 'closing' | 'opening';
 
@@ -35,8 +35,16 @@ export function ScreenWipeLoader({
 
   const panelHeight = useMemo(() => height / 2 + PANEL_OVERLAP, [height]);
   const bottomPanelTop = useMemo(() => height - panelHeight, [height, panelHeight]);
-  const bottomTextY = useMemo(() => bottomPanelTop + TEXT_BOTTOM_PANEL_OFFSET, [bottomPanelTop]);
-  const topTextY = useMemo(() => panelHeight - TEXT_TOP_PANEL_OFFSET - TEXT_SIZE, [panelHeight]);
+  const bottomTextY = useMemo(
+    () => bottomPanelTop + TEXT_BOTTOM_PANEL_TOP_OFFSET,
+    [bottomPanelTop],
+  );
+  const topTextY = useMemo(
+    // The bottom panel sits on top of the overlap zone when closed, so the visible
+    // "bottom of the top panel" is just above the bottom panel's top edge.
+    () => bottomPanelTop - TEXT_SIZE - TEXT_TOP_PANEL_BOTTOM_OFFSET,
+    [bottomPanelTop],
+  );
 
   useEffect(() => {
     if (lastPhaseRef.current === phase) {
@@ -130,19 +138,22 @@ export function ScreenWipeLoader({
     return null;
   }
 
-  const bottomPanelTextY = Animated.add(bottomTextY, bottomTranslate);
-  const textBaseY = Animated.add(
-    bottomPanelTextY,
-    textJumpProgress.interpolate({
-      inputRange: [0, 1],
-      outputRange: [0, topTextY - bottomTextY],
-    }),
-  );
+  const bottomFollowFactor = textJumpProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0],
+  });
+  const topFollowFactor = textJumpProgress;
   const textTranslateY = Animated.add(
-    textBaseY,
-    Animated.multiply(
-      textJumpProgress,
-      Animated.add(topTranslate, Animated.multiply(bottomTranslate, -1)),
+    bottomTextY,
+    Animated.add(
+      Animated.multiply(bottomTranslate, bottomFollowFactor),
+      Animated.add(
+        textJumpProgress.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, topTextY - bottomTextY],
+        }),
+        Animated.multiply(topTranslate, topFollowFactor),
+      ),
     ),
   );
 

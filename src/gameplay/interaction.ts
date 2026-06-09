@@ -3,6 +3,8 @@ type BoardInteractionLockState = {
   hasPendingSwap: boolean;
   hasMatchSplash: boolean;
   hasDropAnimation: boolean;
+  hasSpecialMergeAnimation: boolean;
+  hasSpecialWipeAnimation: boolean;
   hasPendingResolvedState: boolean;
 };
 
@@ -11,7 +13,17 @@ export function isBoardInteractionLocked({
   hasPendingSwap,
   hasMatchSplash,
   hasDropAnimation,
+  hasSpecialMergeAnimation,
+  hasSpecialWipeAnimation,
   hasPendingResolvedState,
 }: BoardInteractionLockState) {
-  return paused || hasPendingSwap || hasMatchSplash || hasDropAnimation || hasPendingResolvedState;
+  return (
+    paused ||
+    hasPendingSwap ||
+    hasMatchSplash ||
+    hasDropAnimation ||
+    hasSpecialMergeAnimation ||
+    hasSpecialWipeAnimation ||
+    hasPendingResolvedState
+  );
 }

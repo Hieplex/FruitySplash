@@ -1,4 +1,32 @@
-import type { Board, MatchGroup, Position } from './types';
+import { getCellFruit } from './cells';
+import type { Board, MatchGroup, MatchTier, Position } from './types';
+
+const MATCH_TIER_BONUS: Record<MatchTier, number> = {
+  3: 0,
+  4: 20,
+  5: 50,
+  6: 90,
+  7: 140,
+};
+
+export function getMatchTier(size: number): MatchTier {
+  if (size >= 7) return 7;
+  if (size >= 6) return 6;
+  if (size >= 5) return 5;
+  if (size >= 4) return 4;
+  return 3;
+}
+
+export function getMatchGroupScore(match: MatchGroup) {
+  const size = match.size ?? match.cells.length;
+  const tier = match.tier ?? getMatchTier(size);
+
+  return size * 10 + MATCH_TIER_BONUS[tier];
+}
+
+export function getMatchScore(matches: MatchGroup[]) {
+  return matches.reduce((total, match) => total + getMatchGroupScore(match), 0);
+}
 
 function buildCells(
   axis: MatchGroup['axis'],
@@ -21,16 +49,19 @@ export function findMatches(board: Board): MatchGroup[] {
   for (let row = 0; row < rows; row += 1) {
     let col = 0;
     while (col < cols) {
-      const fruit = board[row][col];
+      const fruit = getCellFruit(board[row][col]);
       let end = col + 1;
-      while (end < cols && board[row][end] === fruit) {
+      while (end < cols && getCellFruit(board[row][end]) === fruit) {
         end += 1;
       }
       if (end - col >= 3) {
+        const size = end - col;
         matches.push({
           axis: 'row',
           fruit,
-          cells: buildCells('row', row, col, end - col),
+          size,
+          tier: getMatchTier(size),
+          cells: buildCells('row', row, col, size),
         });
       }
       col = end;
@@ -40,16 +71,19 @@ export function findMatches(board: Board): MatchGroup[] {
   for (let col = 0; col < cols; col += 1) {
     let row = 0;
     while (row < rows) {
-      const fruit = board[row][col];
+      const fruit = getCellFruit(board[row][col]);
       let end = row + 1;
-      while (end < rows && board[end][col] === fruit) {
+      while (end < rows && getCellFruit(board[end][col]) === fruit) {
         end += 1;
       }
       if (end - row >= 3) {
+        const size = end - row;
         matches.push({
           axis: 'column',
           fruit,
-          cells: buildCells('column', col, row, end - row),
+          size,
+          tier: getMatchTier(size),
+          cells: buildCells('column', col, row, size),
         });
       }
       row = end;

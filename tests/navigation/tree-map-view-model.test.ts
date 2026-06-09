@@ -27,11 +27,11 @@ describe('tree map view model', () => {
       tease: { visible: true },
     });
     expect(viewModel.bands[0].nodes).toEqual([
-      { levelId: 1, state: 'completed', stars: 3, anchor: { x: 0.42, y: 0.16 } },
-      { levelId: 2, state: 'completed', stars: 2, anchor: { x: 0.58, y: 0.31 } },
+      { levelId: 1, state: 'completed', stars: 3, anchor: { x: 0.48, y: 0.83 } },
+      { levelId: 2, state: 'completed', stars: 2, anchor: { x: 0.6, y: 0.66 } },
       { levelId: 3, state: 'current', stars: 0, anchor: { x: 0.44, y: 0.48 } },
-      { levelId: 4, state: 'locked', stars: 0, anchor: { x: 0.6, y: 0.66 } },
-      { levelId: 5, state: 'locked', stars: 0, anchor: { x: 0.48, y: 0.83 } },
+      { levelId: 4, state: 'locked', stars: 0, anchor: { x: 0.58, y: 0.31 } },
+      { levelId: 5, state: 'locked', stars: 0, anchor: { x: 0.42, y: 0.16 } },
     ]);
   });
 
@@ -50,10 +50,10 @@ describe('tree map view model', () => {
     expect(viewModel.bands[1].canopy).toEqual({ visible: true, mode: 'closed' });
     expect(viewModel.bands[2].tease.visible).toBe(true);
     expect(viewModel.bands[2].nodes).toEqual([
-      { levelId: 11, state: 'locked', stars: 0, anchor: { x: 0.42, y: 0.16 } },
-      { levelId: 12, state: 'locked', stars: 0, anchor: { x: 0.58, y: 0.31 } },
+      { levelId: 11, state: 'locked', stars: 0, anchor: { x: 0.48, y: 0.83 } },
+      { levelId: 12, state: 'locked', stars: 0, anchor: { x: 0.6, y: 0.66 } },
       { levelId: 13, state: 'locked', stars: 0, anchor: { x: 0.44, y: 0.48 } },
-      { levelId: 14, state: 'locked', stars: 0, anchor: { x: 0.6, y: 0.66 } },
+      { levelId: 14, state: 'locked', stars: 0, anchor: { x: 0.58, y: 0.31 } },
     ]);
   });
 
@@ -68,7 +68,7 @@ describe('tree map view model', () => {
           startLevel: 1,
           endLevel: 1,
           trunkSide: 'left',
-          nodes: [{ levelId: 1, state: 'current', stars: 0, anchor: { x: 0.42, y: 0.16 } }],
+          nodes: [{ levelId: 1, state: 'current', stars: 0, anchor: { x: 0.48, y: 0.83 } }],
           canopy: { visible: false, mode: 'closed' },
           tease: { visible: false },
         },
@@ -93,8 +93,8 @@ describe('tree map view model', () => {
         endLevel: 3,
         trunkSide: 'left',
         nodes: [
-          { levelId: 1, state: 'completed', stars: 3, anchor: { x: 0.42, y: 0.16 } },
-          { levelId: 2, state: 'completed', stars: 3, anchor: { x: 0.58, y: 0.31 } },
+          { levelId: 1, state: 'completed', stars: 3, anchor: { x: 0.48, y: 0.83 } },
+          { levelId: 2, state: 'completed', stars: 3, anchor: { x: 0.6, y: 0.66 } },
           { levelId: 3, state: 'completed', stars: 3, anchor: { x: 0.44, y: 0.48 } },
         ],
         canopy: { visible: false, mode: 'closed' },

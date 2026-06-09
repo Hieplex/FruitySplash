@@ -1,5 +1,8 @@
+import { cloneCell, createFruitCell, getCellFruit } from './cells';
 import { findMatches } from './match';
-import type { Board, Position } from './types';
+import type { Board, NullableBoard, Position } from './types';
+
+export { cloneCell, createFruitCell, getCellFruit, isSpecialCell } from './cells';
 
 export const DEFAULT_ROWS = 8;
 export const DEFAULT_COLS = 6;
@@ -23,10 +26,6 @@ function createRng(seed: number): () => number {
   };
 }
 
-function cloneRow<T>(row: readonly T[]): T[] {
-  return [...row];
-}
-
 function assertShape(rows: readonly number[][], expectedRows: number, expectedCols: number) {
   if (rows.length !== expectedRows || rows.some((row) => row.length !== expectedCols)) {
     throw new Error(`Board must be ${expectedRows}x${expectedCols}.`);
@@ -41,24 +40,26 @@ function assertFruitRange(rows: readonly number[][], fruitTypes: number) {
 
 function generateCandidate(rows: number, cols: number, fruitTypes: number, seed: number): Board {
   const rng = createRng(seed);
-  const board: Board = Array.from({ length: rows }, () => Array.from({ length: cols }, () => 0));
+  const board: Board = Array.from({ length: rows }, () =>
+    Array.from({ length: cols }, () => createFruitCell(0)),
+  );
 
   for (let row = 0; row < rows; row += 1) {
     for (let col = 0; col < cols; col += 1) {
       const blocked = new Set<number>();
 
-      if (col >= 2 && board[row][col - 1] === board[row][col - 2]) {
-        blocked.add(board[row][col - 1]);
+      if (col >= 2 && getCellFruit(board[row][col - 1]) === getCellFruit(board[row][col - 2])) {
+        blocked.add(getCellFruit(board[row][col - 1]));
       }
-      if (row >= 2 && board[row - 1][col] === board[row - 2][col]) {
-        blocked.add(board[row - 1][col]);
+      if (row >= 2 && getCellFruit(board[row - 1][col]) === getCellFruit(board[row - 2][col])) {
+        blocked.add(getCellFruit(board[row - 1][col]));
       }
 
       const options = Array.from({ length: fruitTypes }, (_, fruit) => fruit).filter(
         (fruit) => !blocked.has(fruit),
       );
       const pick = Math.floor(rng() * options.length);
-      board[row][col] = options[pick] ?? 0;
+      board[row][col] = createFruitCell(options[pick] ?? 0);
     }
   }
 
@@ -91,11 +92,15 @@ export function createBoard(options: CreateBoardOptions = {}): Board {
 export function createBoardFromRows(rows: readonly number[][]): Board {
   assertShape(rows, DEFAULT_ROWS, DEFAULT_COLS);
   assertFruitRange(rows, DEFAULT_FRUIT_TYPES);
-  return rows.map((row) => cloneRow(row));
+  return rows.map((row) => row.map(createFruitCell));
 }
 
 export function cloneBoard(board: Board): Board {
-  return board.map((row) => cloneRow(row));
+  return board.map((row) => row.map(cloneCell));
+}
+
+export function cloneNullableBoard(board: NullableBoard): NullableBoard {
+  return board.map((row) => row.map((cell) => (cell === null ? null : cloneCell(cell))));
 }
 
 export function isWithinBounds(position: Position, board: Board): boolean {

@@ -73,4 +73,11 @@ export function useProgress() {
 }
 
 export { createDefaultProgress, applyLevelCompletion, consumeBooster, sanitizeProgressState } from '@/state/progress-helpers';
-export { getLevelStars, getPlayableLevelId, isLevelUnlocked } from '@/state/progress-helpers';
+export {
+  getCompletedLevelCountInRange,
+  getLevelStars,
+  getPlayableLevelId,
+  hasCompletedLevel,
+  hasCompletedLevelRange,
+  isLevelUnlocked,
+} from '@/state/progress-helpers';

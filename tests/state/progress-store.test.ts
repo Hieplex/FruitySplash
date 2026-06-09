@@ -3,8 +3,13 @@ import {
   applyLevelCompletion,
   consumeBooster,
   createDefaultProgress,
+  getCompletedLevelCountFromStart,
+  getCompletedLevelCountInRange,
   getLevelStars,
+  getLastCompletedLevelIdFromStart,
   getPlayableLevelId,
+  hasCompletedLevel,
+  hasCompletedLevelRange,
   isLevelUnlocked,
   sanitizeProgressState,
 } from '@/state/progress-helpers';
@@ -69,6 +74,36 @@ describe('progress store helpers', () => {
     expect(getPlayableLevelId(progress, 2, [1, 2, 3, 4])).toBe(2);
     expect(getPlayableLevelId(progress, 4, [1, 2, 3, 4])).toBe(3);
     expect(getPlayableLevelId(progress, 999, [1, 2, 3, 4])).toBe(3);
+  });
+
+  it('checks level completion by finished levels, not just unlock progress', () => {
+    const unlockedOnly = {
+      ...createDefaultProgress(),
+      unlockedLevel: 6,
+    };
+
+    expect(hasCompletedLevel(unlockedOnly, 1)).toBe(false);
+    expect(getCompletedLevelCountInRange(unlockedOnly, 1, 5)).toBe(0);
+    expect(hasCompletedLevelRange(unlockedOnly, 1, 5)).toBe(false);
+    expect(getCompletedLevelCountFromStart(unlockedOnly)).toBe(0);
+    expect(getLastCompletedLevelIdFromStart(unlockedOnly)).toBe(1);
+
+    const completedBand = applyLevelCompletion(
+      applyLevelCompletion(
+        applyLevelCompletion(applyLevelCompletion(applyLevelCompletion(createDefaultProgress(), 1, 1000, 1), 2, 1000, 1), 3, 1000, 1),
+        4,
+        1000,
+        1,
+      ),
+      5,
+      1000,
+      1,
+    );
+
+    expect(getCompletedLevelCountInRange(completedBand, 1, 5)).toBe(5);
+    expect(hasCompletedLevelRange(completedBand, 1, 5)).toBe(true);
+    expect(getCompletedLevelCountFromStart(completedBand)).toBe(5);
+    expect(getLastCompletedLevelIdFromStart(completedBand)).toBe(5);
   });
 
   it('sanitizes persisted progress before using it', () => {

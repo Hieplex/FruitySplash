@@ -1,6 +1,7 @@
-import { Image, Pressable, type ImageSourcePropType } from 'react-native';
+import { Image, Pressable, View, type ImageSourcePropType } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { fruitRuntimeAssetIds, fruitRuntimeAssets } from '@/game/assets/runtime-assets';
+import type { SpecialCellKind, SpecialMatchTier } from '@/game/types';
 import { colors, fruitAccentColors } from '@/theme/colors';
 
 export function FruitTileImage({
@@ -32,6 +33,7 @@ export function FruitTile({
   size,
   imageScale = 1.28,
   selected,
+  special = null,
   onPress,
   disabled = false,
 }: {
@@ -39,6 +41,10 @@ export function FruitTile({
   size: number;
   imageScale?: number;
   selected: boolean;
+  special?: {
+    kind: SpecialCellKind;
+    powerTier: SpecialMatchTier;
+  } | null;
   onPress: () => void;
   disabled?: boolean;
 }) {
@@ -46,6 +52,12 @@ export function FruitTile({
   const asset = fruitRuntimeAssets[assetId];
   const accent = fruitAccentColors[fruit] ?? colors.coral;
   const imageSize = Math.round(size * imageScale);
+  const markerColor =
+    special?.kind === 'column-wipe'
+      ? '#dff7ff'
+      : special?.kind === 'color-clear'
+        ? '#f6d8ff'
+        : '#fff0aa';
 
   return (
     <Pressable
@@ -68,6 +80,78 @@ export function FruitTile({
       }}
     >
       <FruitTileImage source={asset} uri="" size={imageSize} />
+      {special ? (
+        <>
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              inset: Math.max(2, Math.round(size * 0.08)),
+              borderRadius: size / 2,
+              borderWidth: Math.max(2, Math.round(size * 0.06)),
+              borderColor: markerColor,
+              backgroundColor: 'rgba(255,255,255,0.1)',
+            }}
+          />
+          {special.kind === 'row-wipe' || special.kind === 'cross-wipe' ? (
+            <View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                top: size / 2 - 2,
+                left: size / 2 - size * 0.2,
+                width: size * 0.4,
+                height: 4,
+                borderRadius: 999,
+                backgroundColor: special.kind === 'cross-wipe' ? '#fff6f8' : '#fff6cf',
+                opacity: 0.95,
+              }}
+            />
+          ) : null}
+          {special.kind === 'column-wipe' || special.kind === 'cross-wipe' ? (
+            <View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                top: size / 2 - size * 0.2,
+                left: size / 2 - 2,
+                width: 4,
+                height: size * 0.4,
+                borderRadius: 999,
+                backgroundColor: special.kind === 'cross-wipe' ? '#fff6f8' : '#edfaff',
+                opacity: 0.95,
+              }}
+            />
+          ) : null}
+          {special.kind === 'color-clear' ? (
+            <>
+              <View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  width: size * 0.2,
+                  height: size * 0.2,
+                  borderRadius: 999,
+                  backgroundColor: '#fff3ff',
+                  opacity: 0.98,
+                }}
+              />
+              <View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  width: size * 0.46,
+                  height: size * 0.46,
+                  borderRadius: 999,
+                  borderWidth: 2,
+                  borderColor: '#ffe3ff',
+                  opacity: 0.88,
+                }}
+              />
+            </>
+          ) : null}
+        </>
+      ) : null}
     </Pressable>
   );
 }

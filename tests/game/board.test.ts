@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createBoard,
   createBoardFromRows,
+  getCellFruit,
   hasAvailableMoves,
   isAdjacent,
   swapCells,
@@ -10,6 +11,22 @@ import {
 import { findMatches } from '../../src/game/match';
 
 describe('board', () => {
+  it('wraps numeric fixtures as normal fruit cells', () => {
+    const board = createBoardFromRows([
+      [0, 0, 0, 1, 2, 3],
+      [1, 2, 3, 4, 0, 1],
+      [2, 3, 4, 0, 1, 2],
+      [3, 4, 0, 1, 2, 3],
+      [4, 0, 1, 2, 3, 4],
+      [0, 1, 2, 3, 4, 0],
+      [1, 2, 3, 4, 0, 1],
+      [2, 3, 4, 0, 1, 2],
+    ]);
+
+    expect(board[0][0]).toEqual({ type: 'fruit', fruit: 0 });
+    expect(getCellFruit(board[0][0])).toBe(0);
+  });
+
   it('creates deterministic 8x6 boards with five fruit types and no immediate matches', () => {
     const first = createBoard({ rows: 8, cols: 6, fruitTypes: 5, seed: 7 });
     const second = createBoard({ rows: 8, cols: 6, fruitTypes: 5, seed: 7 });
@@ -17,7 +34,7 @@ describe('board', () => {
     expect(first).toEqual(second);
     expect(first).toHaveLength(8);
     expect(first.every((row) => row.length === 6)).toBe(true);
-    expect(first.flat().every((fruit) => fruit >= 0 && fruit < 5)).toBe(true);
+    expect(first.flat().every((cell) => getCellFruit(cell) >= 0 && getCellFruit(cell) < 5)).toBe(true);
     expect(findMatches(first)).toEqual([]);
   });
 
@@ -38,10 +55,10 @@ describe('board', () => {
 
     const swapped = swapCells(board, { row: 0, col: 0 }, { row: 0, col: 1 });
 
-    expect(board[0][0]).toBe(0);
-    expect(board[0][1]).toBe(1);
-    expect(swapped[0][0]).toBe(1);
-    expect(swapped[0][1]).toBe(0);
+    expect(getCellFruit(board[0][0])).toBe(0);
+    expect(getCellFruit(board[0][1])).toBe(1);
+    expect(getCellFruit(swapped[0][0])).toBe(1);
+    expect(getCellFruit(swapped[0][1])).toBe(0);
     expect(() => swapCells(board, { row: 0, col: 0 }, { row: 2, col: 0 })).toThrow(
       /adjacent/i,
     );

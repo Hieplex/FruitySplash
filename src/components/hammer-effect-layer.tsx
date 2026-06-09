@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, View, type ImageSourcePropType } from 'react-native';
 import { isHammerEffectCell, type HammerAnimation } from '@/components/hammer-effect-cell';
 import { FruitTile } from '@/components/fruit-tile';
+import { getCellFruit } from '@/game/board';
 import { vfxRuntimeAssets } from '@/game/assets/runtime-assets';
 import type { Board } from '@/game/types';
 
@@ -200,7 +201,7 @@ export function HammerEffectLayer({
           }}
         >
           <FruitTile
-            fruit={targetFruit}
+            fruit={getCellFruit(targetFruit)}
             size={tileSize}
             imageScale={fruitImageScale}
             selected={false}
