@@ -188,7 +188,7 @@ export function GameBoard({
     );
   }, [specialMergeAnimation]);
   const fruityCrossHiddenCells = useMemo(() => {
-    if (specialWipeAnimation?.sourceTool !== 'fruityCross') {
+    if (specialWipeAnimation?.sourceTool !== 'fruityCross' || specialWipeAnimation.previewOnly) {
       return new Set<string>();
     }
 

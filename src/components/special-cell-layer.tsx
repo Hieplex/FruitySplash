@@ -51,6 +51,9 @@ export type SpecialWipeAnimation = {
   rowTravelDirection?: RowClearTravelDirection;
   preDelayMs?: number;
   durationMs?: number;
+  previewOnly?: boolean;
+  groupDropCompleted?: boolean;
+  initialElapsedMs?: number;
 };
 
 type SpecialCellLayerProps = {
@@ -231,11 +234,15 @@ export function SpecialCellLayer({
     }
 
     animatedWipeKey.current = wipeAnimation.key;
-    wipeProgress.setValue(0);
+    const initialProgress = Math.max(
+      0,
+      Math.min(0.98, (wipeAnimation.initialElapsedMs ?? 0) / Math.max(1, specialWipeTotalDurationMs)),
+    );
+    wipeProgress.setValue(initialProgress);
 
     const animation = Animated.timing(wipeProgress, {
       toValue: 1,
-      duration: specialWipeTotalDurationMs,
+      duration: Math.max(1, specialWipeTotalDurationMs - (wipeAnimation.initialElapsedMs ?? 0)),
       easing: isFruityCrossWipe ? Easing.linear : Easing.out(Easing.quad),
       useNativeDriver: true,
     });
@@ -452,8 +459,8 @@ export function SpecialCellLayer({
     }
 
     const groupSize = Math.max(60, Math.round(tileSize * fruityCrossVisualPlan.groupScale));
-    const armSize = Math.max(28, Math.round(tileSize * fruityCrossVisualPlan.armScale));
-    const originCenterTop = wipeAnimation.origin.row * (tileSize + gap) + tileSize / 2+4;
+    const armSize = Math.max(28, Math.round(groupSize * 0.42));
+    const originCenterTop = wipeAnimation.origin.row * (tileSize + gap) + tileSize / 2-1;
     const originCenterLeft = wipeAnimation.origin.col * (tileSize + gap) + tileSize / 2;
     const groupTop = originCenterTop - groupSize / 2;
     const groupLeft = originCenterLeft - groupSize / 2;
@@ -461,13 +468,18 @@ export function SpecialCellLayer({
     const armLeft = originCenterLeft - armSize / 2;
     const fruityCrossTimelineDuration = Math.max(1, specialWipeTotalDurationMs);
     const maxWaveDelayMs = getSpecialWipeMaxDelayMs(wipeAnimation.cells, wipeAnimation.origin);
-    const groupLandAt = Math.min(0.9, FRUITY_CROSS_GROUP_DROP_MS / fruityCrossTimelineDuration);
-    const splitStartAt = Math.min(0.96, Math.max(groupLandAt + 0.001, getFruityCrossSplitStartMs() / fruityCrossTimelineDuration));
+    const completedGroupDropMs = wipeAnimation.groupDropCompleted ? FRUITY_CROSS_GROUP_DROP_MS : 0;
+    const getTimelineAt = (timeMs: number) =>
+      Math.max(0, Math.min(0.995, (timeMs - completedGroupDropMs) / fruityCrossTimelineDuration));
+    const groupLandAt = wipeAnimation.groupDropCompleted
+      ? 0
+      : Math.min(0.9, FRUITY_CROSS_GROUP_DROP_MS / fruityCrossTimelineDuration);
+    const splitStartAt = Math.min(0.96, Math.max(groupLandAt + 0.001, getTimelineAt(getFruityCrossSplitStartMs())));
     const splitEndAt = Math.min(
       0.995,
       Math.max(
         splitStartAt + 0.04,
-        getFruityCrossTravelEndMs(maxWaveDelayMs) / fruityCrossTimelineDuration,
+        getTimelineAt(getFruityCrossTravelEndMs(maxWaveDelayMs)),
       ),
     );
     const splitWindow = createFruityCrossSplitWindow({ splitStartAt, splitEndAt });
@@ -478,13 +490,15 @@ export function SpecialCellLayer({
       right: uiRuntimeAssets.gameplayFruityCrossRight,
     };
     const mergedOffsets: Record<FruityCrossVisualDirection, { x: number; y: number }> = {
-      top: { x: 0, y: -armSize * 0.45 },
-      down: { x: 0, y: armSize * 0.45 },
-      left: { x: -armSize * 0.48, y: 0 },
-      right: { x: armSize * 0.48, y: 0 },
+      top: { x: 0, y: -armSize * 0.28 },
+      down: { x: 0, y: armSize * 0.28 },
+      left: { x: -armSize * 0.3, y: 0 },
+      right: { x: armSize * 0.3, y: 0 },
     };
     const renderClearCells = () =>
-      wipeAnimation.cells.map((cell, cellIndex) => {
+      wipeAnimation.previewOnly
+        ? null
+        : wipeAnimation.cells.map((cell, cellIndex) => {
         const source = wipeAnimation.board[cell.row]?.[cell.col];
         if (!source) {
           return null;
@@ -500,11 +514,11 @@ export function SpecialCellLayer({
         });
         const cellDelayMs = getFruityCrossClearDelayMs(getSpecialWipeDelayMs(cell, wipeAnimation.origin));
         const totalDuration = Math.max(1, specialWipeTotalDurationMs);
-        const shrinkStartAt = Math.min(0.98, cellDelayMs / totalDuration);
-        const shrinkEndAt = Math.min(0.995, (cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS) / totalDuration);
-        const cloudStartAt = Math.min(0.98, (cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS) / totalDuration);
-        const cloudPeakAt = Math.min(0.99, (cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS + FRUITY_CROSS_CLOUD_PEAK_MS) / totalDuration);
-        const cloudEndAt = Math.min(1, (cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS + FRUITY_CROSS_CLOUD_FADE_MS) / totalDuration);
+        const shrinkStartAt = Math.min(0.98, Math.max(0, (cellDelayMs - completedGroupDropMs) / totalDuration));
+        const shrinkEndAt = Math.min(0.995, Math.max(0, (cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS - completedGroupDropMs) / totalDuration));
+        const cloudStartAt = Math.min(0.98, Math.max(0, (cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS - completedGroupDropMs) / totalDuration));
+        const cloudPeakAt = Math.min(0.99, Math.max(0, (cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS + FRUITY_CROSS_CLOUD_PEAK_MS - completedGroupDropMs) / totalDuration));
+        const cloudEndAt = Math.min(1, Math.max(0, (cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS + FRUITY_CROSS_CLOUD_FADE_MS - completedGroupDropMs) / totalDuration));
         const flashStartAt = cloudStartAt;
         const flashPeakAt = Math.min(0.99, (cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS + FRUITY_CROSS_FLASH_PEAK_MS) / totalDuration);
         const flashEndAt = Math.min(1, (cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS + FRUITY_CROSS_FLASH_FADE_MS) / totalDuration);
@@ -596,7 +610,7 @@ export function SpecialCellLayer({
             {plan.sparkles.map((sparkle, sparkleIndex) => {
               const sparkleSize = Math.round(sparkleBaseSize * sparkle.size);
               const { startAt, peakAt, endAt } = createSafeFruityCrossSparkleWindow(
-                (cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS + FRUITY_CROSS_SPARKLE_START_MS + sparkle.delayMs) / totalDuration,
+                (cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS + FRUITY_CROSS_SPARKLE_START_MS + sparkle.delayMs - completedGroupDropMs) / totalDuration,
                 FRUITY_CROSS_SPARKLE_DURATION_MS / totalDuration,
               );
               const translateX = wipeProgress.interpolate({
@@ -638,28 +652,38 @@ export function SpecialCellLayer({
             })}
           </View>
         );
-      });
+        });
 
-    const groupTranslateY = wipeProgress.interpolate({
-      inputRange: [0, groupLandAt, splitStartAt, 1],
-      outputRange: [
-        -boardPadding - groupSize - fruityCrossVisualPlan.groupDropExtraPx - groupTop,
-        0,
-        0,
-        0,
-      ],
-      extrapolate: 'clamp',
-    });
-    const groupOpacity = wipeProgress.interpolate({
-      inputRange: [0, 0.01, splitStartAt, Math.min(0.99, splitStartAt + 0.001), 1],
-      outputRange: [0, 1, 1, 0, 0],
-      extrapolate: 'clamp',
-    });
-    const groupScale = wipeProgress.interpolate({
-      inputRange: [0, groupLandAt, splitStartAt, 1],
-      outputRange: [0.78, 1, 1, 1],
-      extrapolate: 'clamp',
-    });
+    const groupTranslateY = wipeAnimation.groupDropCompleted
+      ? 0
+      : wipeProgress.interpolate({
+          inputRange: [0, groupLandAt, splitStartAt, 1],
+          outputRange: [
+            -boardPadding - groupSize - fruityCrossVisualPlan.groupDropExtraPx - groupTop,
+            0,
+            0,
+            0,
+          ],
+          extrapolate: 'clamp',
+        });
+    const groupOpacity = wipeAnimation.previewOnly
+      ? wipeProgress.interpolate({
+          inputRange: [0, 0.01, 1],
+          outputRange: [0, 1, 1],
+          extrapolate: 'clamp',
+        })
+      : wipeProgress.interpolate({
+          inputRange: [0, 0.01, splitStartAt, Math.min(0.99, splitStartAt + 0.001), 1],
+          outputRange: [0, 1, 1, 0, 0],
+          extrapolate: 'clamp',
+        });
+    const groupScale = wipeAnimation.groupDropCompleted
+      ? 1
+      : wipeProgress.interpolate({
+          inputRange: [0, groupLandAt, splitStartAt, 1],
+          outputRange: [0.78, 1, 1, 1],
+          extrapolate: 'clamp',
+        });
 
     const arms = fruityCrossVisualPlan.arms.map((arm) => {
       const travelDistance = (arm.distance + 0.42) * (tileSize + gap);
@@ -727,14 +751,31 @@ export function SpecialCellLayer({
         />
       );
     });
+    const mergedGroupPieces = fruityCrossVisualPlan.arms.map((arm) => {
+      const offset = mergedOffsets[arm.direction];
+
+      return (
+        <Animated.Image
+          key={`${wipeAnimation.key}-fruity-cross-group-piece-${arm.direction}`}
+          source={armSources[arm.direction]}
+          resizeMode="contain"
+          style={{
+            position: 'absolute',
+            top: groupSize / 2 - armSize / 2,
+            left: groupSize / 2 - armSize / 2,
+            width: armSize,
+            height: armSize,
+            transform: [{ translateX: offset.x }, { translateY: offset.y }],
+          }}
+        />
+      );
+    });
 
     return (
       <>
         {renderClearCells()}
-        <Animated.Image
+        <Animated.View
           key={`${wipeAnimation.key}-fruity-cross-group`}
-          source={uiRuntimeAssets.gameplayFruityCrossGroup}
-          resizeMode="contain"
           style={{
             position: 'absolute',
             top: groupTop,
@@ -744,8 +785,10 @@ export function SpecialCellLayer({
             opacity: groupOpacity,
             transform: [{ translateY: groupTranslateY }, { scale: groupScale }],
           }}
-        />
-        {arms}
+        >
+          {mergedGroupPieces}
+        </Animated.View>
+        {wipeAnimation.previewOnly ? null : arms}
       </>
     );
   };

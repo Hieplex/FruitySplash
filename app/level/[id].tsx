@@ -27,6 +27,7 @@ import type { Board, BoardCell, CascadeTimelineEvent, EngineState, Position, Row
 import { isBoardInteractionLocked } from '@/gameplay/interaction';
 import { calculateLevelLayout } from '@/gameplay/level-layout';
 import {
+  FRUITY_CROSS_GROUP_DROP_MS,
   getLineRocketClearDelayMs,
   getFruityCrossClearDelayMs,
   getMatchSoundDelayMs,
@@ -188,6 +189,8 @@ export default function LevelScreen() {
     keepAudioSessionActive: true,
   });
   const matchSoundTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const directPowerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const directPowerStartTimes = useRef(new Map<number, number>());
   const completedLevelRef = useRef<number | null>(null);
   const [engineState, setEngineState] = useState<EngineState>(() => createLevelState(level.seed));
   const [selected, setSelected] = useState<Position | null>(null);
@@ -266,6 +269,15 @@ export default function LevelScreen() {
     matchSoundTimer.current = null;
   }
 
+  function clearPendingDirectPower() {
+    if (directPowerTimer.current === null) {
+      return;
+    }
+
+    clearTimeout(directPowerTimer.current);
+    directPowerTimer.current = null;
+  }
+
   function playMatchSound(delayMs = 0) {
     clearPendingMatchSound();
 
@@ -319,6 +331,7 @@ export default function LevelScreen() {
     return () => {
       clearTimeout(timer);
       clearPendingMatchSound();
+      clearPendingDirectPower();
     };
   }, []);
 
@@ -333,6 +346,8 @@ export default function LevelScreen() {
   useEffect(() => {
     completedLevelRef.current = null;
     clearPendingMatchSound();
+    clearPendingDirectPower();
+    directPowerStartTimes.current.clear();
     setEngineState(createLevelState(level.seed));
     setSelected(null);
     setPaused(false);
@@ -515,7 +530,11 @@ export default function LevelScreen() {
           sourceTool: job.sourceTool,
           rowTravelDirection: job.rowTravelDirection,
           preDelayMs,
-          durationMs: maxDelayMs + preDelayMs + SPECIAL_WIPE_SPLASH_DURATION_MS,
+          durationMs:
+            job.sourceTool === 'fruityCross'
+              ? Math.max(1, maxDelayMs - FRUITY_CROSS_GROUP_DROP_MS) + preDelayMs + SPECIAL_WIPE_SPLASH_DURATION_MS
+              : maxDelayMs + preDelayMs + SPECIAL_WIPE_SPLASH_DURATION_MS,
+          groupDropCompleted: job.sourceTool === 'fruityCross',
         });
       });
       playMatchSound(getMatchSoundDelayMs(splash));
@@ -746,20 +765,9 @@ export default function LevelScreen() {
 
   function activateDirectSpecialPower(tool: DirectSpecialPowerTool, target: Position) {
     const key = Date.now();
-    const refillSeed = level.seed + engineState.movesUsed * 101 + target.row * 29 + target.col * 47 + key;
-    const cascadeRefillSeed = level.seed + engineState.movesUsed * 101 + target.row * 31 + target.col * 53 + key + 512;
-    const sequence = resolveDirectSpecialPowerSequence({
-      key,
-      target,
-      tool,
-      kind: getDirectSpecialPowerKind(tool),
-      board: engineState.board,
-      engineState,
-      refill: createSeededRefill({ seed: refillSeed, fruitTypes: level.fruitTypes }),
-      cascadeRefill: createSeededRefill({ seed: cascadeRefillSeed, fruitTypes: level.fruitTypes }),
-      reshuffle: (board: Board) => createBoard({ seed: level.seed + engineState.movesUsed + 499 }),
-    });
-
+    const boardSnapshot = engineState.board;
+    const stateSnapshot = engineState;
+    clearPendingDirectPower();
     unstable_batchedUpdates(() => {
       setSelectedBoardTool(null);
       setSelected(null);
@@ -771,7 +779,39 @@ export default function LevelScreen() {
       setActiveTimeline(null);
       activeTimelineCompletion.current = null;
     });
-    startTimeline(sequence.jobs, sequence.state);
+
+    if (tool === 'fruityCross') {
+      setSpecialWipeAnimation({
+        key: key - 1,
+        board: boardSnapshot,
+        origin: target,
+        kind: 'cross-wipe',
+        cells: [target],
+        sourceTool: 'fruityCross',
+        preDelayMs: 0,
+        durationMs: FRUITY_CROSS_GROUP_DROP_MS,
+        previewOnly: true,
+      });
+    }
+
+    directPowerTimer.current = setTimeout(() => {
+      directPowerTimer.current = null;
+      const refillSeed = level.seed + stateSnapshot.movesUsed * 101 + target.row * 29 + target.col * 47 + key;
+      const cascadeRefillSeed = level.seed + stateSnapshot.movesUsed * 101 + target.row * 31 + target.col * 53 + key + 512;
+      const sequence = resolveDirectSpecialPowerSequence({
+        key,
+        target,
+        tool,
+        kind: getDirectSpecialPowerKind(tool),
+        board: boardSnapshot,
+        engineState: stateSnapshot,
+        refill: createSeededRefill({ seed: refillSeed, fruitTypes: level.fruitTypes }),
+        cascadeRefill: createSeededRefill({ seed: cascadeRefillSeed, fruitTypes: level.fruitTypes }),
+        reshuffle: (board: Board) => createBoard({ seed: level.seed + stateSnapshot.movesUsed + 499 }),
+      });
+
+      startTimeline(sequence.jobs, sequence.state);
+    }, tool === 'fruityCross' ? FRUITY_CROSS_GROUP_DROP_MS : 0);
   }
 
   function handleSelect(position: Position) {
@@ -937,7 +977,7 @@ export default function LevelScreen() {
   }
 
   function handleSpecialWipeComplete(key: number) {
-    setSpecialWipeAnimation((current) => (current?.key === key ? null : current));
+    setSpecialWipeAnimation((current) => (current?.key === key && !current.previewOnly ? null : current));
     if (!activeTimeline) {
       return;
     }
