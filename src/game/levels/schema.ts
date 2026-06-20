@@ -24,6 +24,7 @@ export interface LevelDefinition {
   cols: number;
   fruitTypes: number;
   timeLimitSeconds: number;
+  moveLimit: number;
   targetScore: number;
   star1: number;
   star2: number;
@@ -77,6 +78,10 @@ export function validateLevel(level: LevelDefinition): string[] {
     issues.push('timeLimitSeconds must be between 30 and 120');
   }
 
+  if (!Number.isInteger(level.moveLimit) || level.moveLimit < 15 || level.moveLimit > 50) {
+    issues.push('moveLimit must be an integer between 15 and 50');
+  }
+
   if (!Number.isInteger(level.targetScore) || level.targetScore < 1000) {
     issues.push('targetScore must be an integer >= 1000');
   }
@@ -87,6 +92,10 @@ export function validateLevel(level: LevelDefinition): string[] {
 
   if (level.targetScore < level.star2) {
     issues.push('targetScore must not be below the two-star threshold');
+  }
+
+  if (level.targetScore !== level.star3) {
+    issues.push('targetScore must match the three-star threshold');
   }
 
   if (getExpectedDifficultyBand(level.id) !== level.difficultyBand) {

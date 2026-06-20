@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFonts } from 'expo-font';
 import { Animated, Easing, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 const PANEL_COLOR = '#ff82b2';
 const PANEL_OUTLINE = '#111111';
 const PANEL_OVERLAP = 64;
+const PANEL_HALF_OVERLAP = PANEL_OVERLAP / 2;
 const CLOSE_DURATION_MS = 300;
 const OPEN_DURATION_MS = 360;
 const TEXT_JUMP_DURATION_MS = 180;
@@ -24,7 +25,9 @@ export function ScreenWipeLoader({
   onClosed?: () => void;
   onOpened?: () => void;
 }) {
-  const { height } = useWindowDimensions();
+  const { height: windowHeight } = useWindowDimensions();
+  const [measuredHeight, setMeasuredHeight] = useState(0);
+  const height = measuredHeight || windowHeight;
   const [fontsLoaded] = useFonts({
     SuperChiby: require('../../assets/Fonts/super-chiby-font/SuperChiby-BL62V.ttf'),
   });
@@ -32,9 +35,11 @@ export function ScreenWipeLoader({
   const bottomTranslate = useRef(new Animated.Value(phase === 'hidden' || phase === 'opening' ? height : 0)).current;
   const textJumpProgress = useRef(new Animated.Value(phase === 'opening' ? 1 : 0)).current;
   const lastPhaseRef = useRef<ScreenWipePhase>(phase);
+  const animationDistanceRef = useRef(height);
+  const textJumpDoneRef = useRef(phase === 'opening');
 
-  const panelHeight = useMemo(() => height / 2 + PANEL_OVERLAP, [height]);
-  const bottomPanelTop = useMemo(() => height - panelHeight, [height, panelHeight]);
+  const panelHeight = useMemo(() => height / 2 + PANEL_HALF_OVERLAP, [height]);
+  const bottomPanelTop = useMemo(() => height / 2 - PANEL_HALF_OVERLAP, [height]);
   const bottomTextY = useMemo(
     () => bottomPanelTop + TEXT_BOTTOM_PANEL_TOP_OFFSET,
     [bottomPanelTop],
@@ -47,6 +52,15 @@ export function ScreenWipeLoader({
   );
 
   useEffect(() => {
+    animationDistanceRef.current = height;
+
+    if (phase === 'hidden') {
+      topTranslate.setValue(-height);
+      bottomTranslate.setValue(height);
+    }
+  }, [bottomTranslate, height, phase, topTranslate]);
+
+  useEffect(() => {
     if (lastPhaseRef.current === phase) {
       return;
     }
@@ -56,9 +70,10 @@ export function ScreenWipeLoader({
       topTranslate.stopAnimation();
       bottomTranslate.stopAnimation();
       textJumpProgress.stopAnimation();
-      topTranslate.setValue(-height);
-      bottomTranslate.setValue(height);
+      topTranslate.setValue(-animationDistanceRef.current);
+      bottomTranslate.setValue(animationDistanceRef.current);
       textJumpProgress.setValue(0);
+      textJumpDoneRef.current = false;
       return;
     }
 
@@ -69,12 +84,14 @@ export function ScreenWipeLoader({
       topTranslate.setValue(0);
       bottomTranslate.setValue(0);
       textJumpProgress.setValue(0);
+      textJumpDoneRef.current = false;
       return;
     }
 
     if (phase === 'closing') {
       textJumpProgress.stopAnimation();
       textJumpProgress.setValue(0);
+      textJumpDoneRef.current = false;
       const animation = Animated.parallel([
         Animated.timing(topTranslate, {
           toValue: 0,
@@ -100,22 +117,31 @@ export function ScreenWipeLoader({
     }
 
     if (phase === 'opening') {
-      const jumpAnimation = Animated.timing(textJumpProgress, {
-        toValue: 1,
-        duration: TEXT_JUMP_DURATION_MS,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      });
+      const shouldJumpText = !textJumpDoneRef.current;
+      const jumpAnimation = shouldJumpText
+        ? Animated.timing(textJumpProgress, {
+            toValue: 1,
+            duration: TEXT_JUMP_DURATION_MS,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          })
+        : Animated.timing(textJumpProgress, {
+            toValue: 1,
+            duration: 0,
+            useNativeDriver: true,
+          });
+
+      textJumpDoneRef.current = true;
 
       const panelAnimation = Animated.parallel([
         Animated.timing(topTranslate, {
-          toValue: -height,
+          toValue: -animationDistanceRef.current,
           duration: OPEN_DURATION_MS,
           easing: Easing.inOut(Easing.cubic),
           useNativeDriver: true,
         }),
         Animated.timing(bottomTranslate, {
-          toValue: height,
+          toValue: animationDistanceRef.current,
           duration: OPEN_DURATION_MS,
           easing: Easing.inOut(Easing.cubic),
           useNativeDriver: true,
@@ -132,7 +158,7 @@ export function ScreenWipeLoader({
 
       return () => animation.stop();
     }
-  }, [bottomTranslate, height, onClosed, onOpened, phase, textJumpProgress, topTranslate]);
+  }, [bottomTranslate, onClosed, onOpened, phase, textJumpProgress, topTranslate]);
 
   if (phase === 'hidden') {
     return null;
@@ -158,7 +184,17 @@ export function ScreenWipeLoader({
   );
 
   return (
-    <View pointerEvents="auto" style={StyleSheet.absoluteFill}>
+    <View
+      pointerEvents="auto"
+      onLayout={(event) => {
+        const nextHeight = Math.round(event.nativeEvent.layout.height);
+
+        if (nextHeight > 0 && nextHeight !== measuredHeight) {
+          setMeasuredHeight(nextHeight);
+        }
+      }}
+      style={StyleSheet.absoluteFill}
+    >
       <Animated.View
         style={[
           styles.panel,
@@ -174,6 +210,7 @@ export function ScreenWipeLoader({
           styles.panel,
           styles.bottomPanel,
           {
+            top: bottomPanelTop,
             height: panelHeight,
             transform: [{ translateY: bottomTranslate }],
           },
@@ -244,7 +281,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 5,
   },
   bottomPanel: {
-    bottom: 0,
     borderTopWidth: 5,
     borderBottomWidth: 5,
   },

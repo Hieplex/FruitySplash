@@ -4,7 +4,6 @@ import {
   Easing,
   PanResponder,
   View,
-  useWindowDimensions,
   type ImageSourcePropType,
 } from 'react-native';
 import type { Board, BoardCell, DropMotion, Position } from '@/game/types';
@@ -25,6 +24,12 @@ import {
 import { getCellFruit, isSpecialCell } from '@/game/board';
 import { buildDropMotionTimings } from '@/gameplay/drop-timing';
 import { getBoardCellFromPoint, getSwipeTarget, getSwipeTargetFromReleaseCell } from '@/gameplay/swipe';
+import {
+  buildSpecialMergeHiddenCellKeys,
+  buildSpecialWipeHiddenCellKeys,
+  cellKey,
+} from '@/components/game-board-visibility';
+import { usePlaytestViewport } from '@/platform/playtest-viewport';
 import { spacing } from '@/theme/spacing';
 
 type PendingSwap = {
@@ -49,6 +54,7 @@ export type ReshuffleAnimation = {
 };
 
 const RESHUFFLE_DURATION_MS = 360;
+const noopPress = () => undefined;
 
 export function GameBoard({
   board,
@@ -62,6 +68,7 @@ export function GameBoard({
   specialMergeAnimation,
   specialWipeAnimation,
   bombDropSource,
+  bombExplosionSource,
   hammerAnimation,
   hammerSource,
   hint,
@@ -93,6 +100,7 @@ export function GameBoard({
   specialMergeAnimation?: SpecialMergeAnimation | null;
   specialWipeAnimation?: SpecialWipeAnimation | null;
   bombDropSource?: ImageSourcePropType;
+  bombExplosionSource?: ImageSourcePropType;
   hammerAnimation?: HammerAnimation | null;
   hammerSource?: ImageSourcePropType;
   hint?: RecommendedMove | null;
@@ -113,7 +121,7 @@ export function GameBoard({
   onSpecialMergeComplete?: (key: number) => void;
   onSpecialWipeComplete?: (key: number) => void;
 }) {
-  const { width } = useWindowDimensions();
+  const { width } = usePlaytestViewport();
   const rowCount = board.length;
   const colCount = board[0]?.length ?? 1;
   const gap = tileGap;
@@ -136,17 +144,17 @@ export function GameBoard({
   const boardPixelHeight = rowCount * tileSize + gap * (rowCount - 1);
   const splashHiddenCells = useMemo(() => {
     if (!matchSplash) {
-      return new Set<string>();
+      return new Set<number>();
     }
 
-    return new Set(matchSplash.cells.map((cell) => `${cell.row}:${cell.col}`));
-  }, [matchSplash]);
+    return new Set(matchSplash.cells.map((cell) => cellKey(cell.row, cell.col, colCount)));
+  }, [colCount, matchSplash]);
   const dropMotions = useMemo(() => (Array.isArray(dropAnimation?.motions) ? dropAnimation.motions : []), [dropAnimation]);
   const dropHiddenCells = useMemo(() => {
-    const hidden = new Set<string>();
+    const hidden = new Set<number>();
 
     dropAnimation?.hiddenCells?.forEach((cell) => {
-      hidden.add(`${cell.row}:${cell.col}`);
+      hidden.add(cellKey(cell.row, cell.col, colCount));
     });
 
     if (dropMotions.length === 0) {
@@ -154,14 +162,14 @@ export function GameBoard({
     }
 
     dropMotions.forEach((motion) => {
-      hidden.add(`${motion.to.row}:${motion.to.col}`);
+      hidden.add(cellKey(motion.to.row, motion.to.col, colCount));
       if (motion.from.row >= 0) {
-        hidden.add(`${motion.from.row}:${motion.from.col}`);
+        hidden.add(cellKey(motion.from.row, motion.from.col, colCount));
       }
     });
 
     return hidden;
-  }, [dropAnimation, dropMotions]);
+  }, [colCount, dropAnimation, dropMotions]);
   const dropTimingSchedule = useMemo(
     () =>
       buildDropMotionTimings(dropMotions, {
@@ -169,31 +177,76 @@ export function GameBoard({
       }),
     [dropAnimation?.startDelaysByColumn, dropMotions],
   );
+  const specialMergeTargetDropMotionIndex = useMemo(() => {
+    if (!specialMergeAnimation || dropMotions.length === 0) {
+      return -1;
+    }
+
+    return dropMotions.findIndex(
+      (motion) =>
+        motion.from.row === specialMergeAnimation.targetCell.row &&
+        motion.from.col === specialMergeAnimation.targetCell.col,
+    );
+  }, [dropMotions, specialMergeAnimation]);
+  const hiddenDropMotionIndices = useMemo(() => {
+    if (specialMergeTargetDropMotionIndex < 0) {
+      return undefined;
+    }
+
+    return new Set([specialMergeTargetDropMotionIndex]);
+  }, [specialMergeTargetDropMotionIndex]);
   const bombClearedCells = useMemo(() => {
     if (!bombDropAnimation?.blastCells) {
-      return new Set<string>();
+      return new Set<number>();
     }
 
-    return new Set(bombDropAnimation.blastCells.map((cell) => `${cell.row}:${cell.col}`));
-  }, [bombDropAnimation]);
+    return new Set(bombDropAnimation.blastCells.map((cell) => cellKey(cell.row, cell.col, colCount)));
+  }, [bombDropAnimation, colCount]);
   const specialMergeHiddenCells = useMemo(() => {
     if (!specialMergeAnimation) {
-      return new Set<string>();
+      return new Set<number>();
     }
 
-    return new Set(
-      [...specialMergeAnimation.sourceCells, ...(specialMergeAnimation.hiddenCells ?? [])].map(
-        (cell) => `${cell.row}:${cell.col}`,
-      ),
-    );
-  }, [specialMergeAnimation]);
+    return buildSpecialMergeHiddenCellKeys({
+      sourceCells: specialMergeAnimation.sourceCells,
+      hiddenCells: specialMergeAnimation.hiddenCells,
+      targetCell: specialMergeAnimation.targetCell,
+      colCount,
+    });
+  }, [colCount, specialMergeAnimation]);
   const fruityCrossHiddenCells = useMemo(() => {
     if (specialWipeAnimation?.sourceTool !== 'fruityCross' || specialWipeAnimation.previewOnly) {
-      return new Set<string>();
+      return new Set<number>();
     }
 
-    return new Set(specialWipeAnimation.cells.map((cell) => `${cell.row}:${cell.col}`));
+    return new Set(specialWipeAnimation.cells.map((cell) => cellKey(cell.row, cell.col, colCount)));
+  }, [colCount, specialWipeAnimation]);
+  const chainedSpecialWipeAnimations = useMemo(() => {
+    if (!specialWipeAnimation?.chainedWipes || specialWipeAnimation.chainedWipes.length === 0) {
+      return [];
+    }
+
+    return specialWipeAnimation.chainedWipes.map((chain) => ({
+      key: chain.key,
+      board: specialWipeAnimation.board,
+      origin: chain.origin,
+      kind: chain.kind,
+      cells: chain.cells,
+      targetFruit: chain.targetFruit,
+      preDelayMs: (specialWipeAnimation.preDelayMs ?? 0) + chain.triggerDelayMs,
+      durationMs: specialWipeAnimation.durationMs,
+      previewOnly: false,
+      suppressLightningOverlay: false,
+    }));
   }, [specialWipeAnimation]);
+  const specialWipeHiddenCells = useMemo(
+    () =>
+      buildSpecialWipeHiddenCellKeys({
+        wipes: [specialWipeAnimation, ...chainedSpecialWipeAnimations],
+        colCount,
+      }),
+    [chainedSpecialWipeAnimations, colCount, specialWipeAnimation],
+  );
 
   useEffect(() => {
     onSwapAnimationEndRef.current = onSwapAnimationEnd;
@@ -322,19 +375,23 @@ export function GameBoard({
   }, [reshuffleAnimation, reshuffleProgress]);
 
   const hiddenCell = (rowIndex: number, colIndex: number) => {
-    if (splashHiddenCells.has(`${rowIndex}:${colIndex}`)) {
+    const key = cellKey(rowIndex, colIndex, colCount);
+    if (splashHiddenCells.has(key)) {
       return true;
     }
-    if (dropHiddenCells.has(`${rowIndex}:${colIndex}`)) {
+    if (dropHiddenCells.has(key)) {
       return true;
     }
-    if (dropAnimation && bombClearedCells.has(`${rowIndex}:${colIndex}`)) {
+    if (dropAnimation && bombClearedCells.has(key)) {
       return true;
     }
-    if (specialMergeHiddenCells.has(`${rowIndex}:${colIndex}`)) {
+    if (specialMergeHiddenCells.has(key)) {
       return true;
     }
-    if (fruityCrossHiddenCells.has(`${rowIndex}:${colIndex}`)) {
+    if (fruityCrossHiddenCells.has(key)) {
+      return true;
+    }
+    if (specialWipeHiddenCells.has(key)) {
       return true;
     }
 
@@ -437,10 +494,7 @@ export function GameBoard({
                       : null
                   }
                   disabled
-                  onPress={() => {
-                    if (disabled) return;
-                    onSelect({ row: rowIndex, col: colIndex });
-                  }}
+                  onPress={noopPress}
                 />
               </Animated.View>
             );
@@ -479,7 +533,7 @@ export function GameBoard({
                     }
                   : null
               }
-              onPress={() => undefined}
+              onPress={noopPress}
             />
           </Animated.View>
           <Animated.View
@@ -503,7 +557,7 @@ export function GameBoard({
                     }
                   : null
               }
-              onPress={() => undefined}
+              onPress={noopPress}
             />
           </Animated.View>
         </View>
@@ -514,6 +568,7 @@ export function GameBoard({
           dropProgress={dropProgress}
           dropMotionTimings={dropTimingSchedule.timings}
           dropTotalDurationMs={dropTimingSchedule.totalDurationMs}
+          hiddenMotionIndices={hiddenDropMotionIndices}
           tileSize={tileSize}
           gap={gap}
           boardPadding={boardPadding}
@@ -538,15 +593,36 @@ export function GameBoard({
           gap={gap}
           boardPadding={boardPadding}
           fruitImageScale={fruitImageScale}
+          mergeTargetDropMotion={
+            specialMergeTargetDropMotionIndex >= 0 ? dropMotions[specialMergeTargetDropMotionIndex] : undefined
+          }
+          mergeTargetDropTiming={
+            specialMergeTargetDropMotionIndex >= 0
+              ? dropTimingSchedule.timings[specialMergeTargetDropMotionIndex]
+              : undefined
+          }
+          mergeTargetDropProgress={dropProgress}
+          mergeTargetDropTotalDurationMs={dropTimingSchedule.totalDurationMs}
           onMergeComplete={onSpecialMergeComplete}
           onWipeComplete={onSpecialWipeComplete}
         />
       ) : null}
+      {chainedSpecialWipeAnimations.map((wipeAnimation) => (
+        <SpecialCellLayer
+          key={`chained-special-wipe-${wipeAnimation.key}`}
+          wipeAnimation={wipeAnimation}
+          tileSize={tileSize}
+          gap={gap}
+          boardPadding={boardPadding}
+          fruitImageScale={fruitImageScale}
+        />
+      ))}
       {bombDropAnimation ? (
         <BombEffectLayer
           board={board}
           animation={bombDropAnimation}
           source={bombDropSource}
+          explosionSource={bombExplosionSource}
           tileSize={tileSize}
           gap={gap}
           boardPadding={boardPadding}

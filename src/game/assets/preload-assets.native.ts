@@ -5,19 +5,13 @@ import {
   challengeRuntimeAssets,
   coinRuntimeAssets,
   fruitRuntimeAssets,
-  scoreNumberRuntimeAssets,
   scoreNumberSpriteAsset,
+  soundRuntimeAssets,
+  specialFruitRuntimeAssets,
   treeMapRuntimeAssets,
   uiRuntimeAssets,
+  vfxRuntimeAssets,
 } from '@/game/assets/runtime-assets';
-
-const chapterBackground = require('../../../assets/Chapter/ChapterBackground.png');
-const chapterSweetGrove = require('../../../assets/Chapter/SweetGrove.png');
-const chapterCitrusLocked = require('../../../assets/Chapter/Locked/CitrusMeadow.png');
-const chapterGrapeLocked = require('../../../assets/Chapter/Locked/GrapeHaven.png');
-const chapterMelonLocked = require('../../../assets/Chapter/Locked/MelonBay.png');
-const chapterPineappleLocked = require('../../../assets/Chapter/Locked/PineappleCove.png');
-const chapterBerryLocked = require('../../../assets/Chapter/Locked/BerryBloom.png');
 
 const chapterFruitRainAssets = [
   require('../../../assets/Chapter/Fruits/Apple.png'),
@@ -38,30 +32,28 @@ const chapterFruitRainAssets = [
   require('../../../assets/Chapter/Fruits/Strawberry.png'),
   require('../../../assets/Chapter/Fruits/Watermelon.png'),
 ] as const;
+const shopIconImage = require('../../../assets/Shop/ShopIcon.png');
+const shopBackgroundImage = require('../../../assets/Shop/ShopBackground.png');
+const shopTitleRibbonImage = require('../../../assets/Shop/RibbonTitle.png');
+const shopBuyButtonImage = require('../../../assets/Shop/BuyButton.png');
+const avatarFrameImage = require('../../../assets/Avatar/AvatarFrame.png');
 
 const gameplaySettingsButtonImage = require('../../../assets/fruity/Buttons/SettingScreen/SettingButton.png');
 const gameplaySettingsScreenImage = require('../../../assets/fruity/Buttons/SettingScreen/ScreenSetting.png');
 const gameplaySettingsExitImage = require('../../../assets/fruity/Buttons/SettingScreen/Exit.png');
+const settingsShakingImage = require('../../../assets/fruity/Buttons/SettingScreen/Shaking.png');
+const settingsSoundImage = require('../../../assets/fruity/Buttons/SettingScreen/Sound.png');
+const settingsVfxImage = require('../../../assets/fruity/Buttons/SettingScreen/VFX.png');
+const settingsVolumeBarImage = require('../../../assets/fruity/Buttons/SettingScreen/volumebar.png');
+const settingsVolumeActiveImage = require('../../../assets/fruity/Buttons/SettingScreen/volumeactive.png');
+const settingsVolumeThumbImage = require('../../../assets/fruity/Buttons/SettingScreen/volumethumb.png');
 
 const startupAssets = [
   backgroundRuntimeAssets.menu,
-  backgroundRuntimeAssets.map,
   uiRuntimeAssets.gameLogo,
   uiRuntimeAssets.buttonPlay,
   uiRuntimeAssets.buttonExit,
-  chapterBackground,
-  chapterSweetGrove,
-  chapterCitrusLocked,
-  chapterGrapeLocked,
-  chapterMelonLocked,
-  chapterPineappleLocked,
-  chapterBerryLocked,
-  coinRuntimeAssets.icon,
-  ...Object.values(coinRuntimeAssets.digits),
-  ...challengeRuntimeAssets.slice(0, 10),
 ] as const;
-
-const chapterDecorAssets = [...chapterFruitRainAssets] as const;
 
 const gameplayAssets = [
   backgroundRuntimeAssets.gameplay,
@@ -70,20 +62,30 @@ const gameplayAssets = [
   gameplaySettingsExitImage,
   uiRuntimeAssets.gameplayHomeButton,
   uiRuntimeAssets.gameplayMapButton,
+  soundRuntimeAssets.matchEffect,
   uiRuntimeAssets.gameplayBombButton,
   uiRuntimeAssets.gameplayBombDrop,
+  uiRuntimeAssets.gameplayBombExploded,
+  soundRuntimeAssets.bombEffect,
   uiRuntimeAssets.gameplayHammerButton,
   uiRuntimeAssets.gameplayLineRocketButton,
   uiRuntimeAssets.gameplayLineRocketImage,
   uiRuntimeAssets.gameplayLineRocketThrustBig,
   uiRuntimeAssets.gameplayLineRocketThrustSmall,
+  soundRuntimeAssets.lineRocketEffect,
   uiRuntimeAssets.gameplayFruityCrossButton,
   uiRuntimeAssets.gameplayFruityCrossGroup,
   uiRuntimeAssets.gameplayFruityCrossTop,
   uiRuntimeAssets.gameplayFruityCrossDown,
   uiRuntimeAssets.gameplayFruityCrossLeft,
   uiRuntimeAssets.gameplayFruityCrossRight,
+  soundRuntimeAssets.fruityCrossEffect,
   uiRuntimeAssets.gameplayLightningFruitsButton,
+  uiRuntimeAssets.gameplayLightningComeDown,
+  uiRuntimeAssets.gameplayGroundLightning,
+  soundRuntimeAssets.lightningEffect,
+  soundRuntimeAssets.gameplayBackgroundMusic,
+  uiRuntimeAssets.finishContinueButton,
   uiRuntimeAssets.navigatorBar,
   barRuntimeAssets.score,
   barRuntimeAssets.moves,
@@ -93,10 +95,41 @@ const gameplayAssets = [
   barRuntimeAssets.fullStar,
   scoreNumberSpriteAsset,
   ...Object.values(fruitRuntimeAssets),
-  ...Object.values(scoreNumberRuntimeAssets),
+  ...Object.values(specialFruitRuntimeAssets).flatMap((assets) => Object.values(assets)),
+  vfxRuntimeAssets.splashBurst,
+  vfxRuntimeAssets.splashDroplet,
+  vfxRuntimeAssets.splashSparkle,
+  vfxRuntimeAssets.mysteryCloud,
+  vfxRuntimeAssets.bombShockwave,
+  ...Object.values(vfxRuntimeAssets.seedSparkByFruit),
 ] as const;
 
-const treeMapAssets = Object.values(treeMapRuntimeAssets) as readonly number[];
+const treeMapAssets = [
+  ...Object.values(treeMapRuntimeAssets),
+  ...chapterFruitRainAssets,
+  shopIconImage,
+  shopBackgroundImage,
+  shopTitleRibbonImage,
+  shopBuyButtonImage,
+  avatarFrameImage,
+  gameplaySettingsButtonImage,
+  gameplaySettingsScreenImage,
+  gameplaySettingsExitImage,
+  settingsShakingImage,
+  settingsSoundImage,
+  settingsVfxImage,
+  settingsVolumeBarImage,
+  settingsVolumeActiveImage,
+  settingsVolumeThumbImage,
+  uiRuntimeAssets.gameplayBombButton,
+  uiRuntimeAssets.gameplayLineRocketButton,
+  uiRuntimeAssets.gameplayFruityCrossButton,
+  uiRuntimeAssets.gameplayLightningFruitsButton,
+  uiRuntimeAssets.buttonSettings,
+  coinRuntimeAssets.icon,
+  ...Object.values(coinRuntimeAssets.digits),
+  ...challengeRuntimeAssets,
+] as const;
 
 const warmedAssetGroups = new Set<string>();
 
@@ -117,10 +150,6 @@ async function warmAssetGroup(key: string, assets: readonly number[]) {
 
 export function warmStartupAssets() {
   return warmAssetGroup('startup', startupAssets);
-}
-
-export function warmChapterDecorAssets() {
-  return warmAssetGroup('chapterDecor', chapterDecorAssets);
 }
 
 export function warmGameplayAssets() {

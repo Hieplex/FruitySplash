@@ -11,6 +11,7 @@ export type MatchTier = 3 | 4 | 5 | 6 | 7;
 export type SpecialMatchTier = Exclude<MatchTier, 3>;
 
 export type SpecialCellKind = 'row-wipe' | 'column-wipe' | 'cross-wipe' | 'color-clear';
+export type SpecialWipeSourceTool = 'lineRocket' | 'fruityCross' | 'lightningFruits';
 
 export type NormalCell = {
   type: 'fruit';
@@ -107,8 +108,10 @@ export type CascadeTimelineSpecialWipeEvent = {
   origin: Position;
   kind: SpecialCellKind;
   cells: Position[];
+  triggeredBy?: Position;
+  triggerDelayMs?: number;
   targetFruit?: Fruit;
-  sourceTool?: 'lineRocket' | 'fruityCross';
+  sourceTool?: SpecialWipeSourceTool;
   rowTravelDirection?: RowClearTravelDirection;
 };
 

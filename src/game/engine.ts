@@ -2,10 +2,14 @@ import { cloneBoard, cloneNullableBoard, hasAvailableMoves, isAdjacent, isSpecia
 import { clearMatchedCells, collapseBoard } from './gravity';
 import { findMatches, getMatchedCells, getMatchScore, getMatchTier } from './match';
 import {
-  getSpecialCellClearCells,
   getSpecialCellKindForMatch,
   pickSpecialCellPosition,
 } from './special-cells';
+import {
+  collectSpecialChainActivations,
+  uniquePositions,
+  type SpecialChainActivation,
+} from './special-chain';
 import type {
   Board,
   CascadeTimelineCause,
@@ -50,21 +54,13 @@ function isSamePosition(left: Position, right: Position) {
   return left.row === right.row && left.col === right.col;
 }
 
-function uniquePositions(cells: Position[]) {
-  const unique = new Map<string, Position>();
-
-  cells.forEach((cell) => {
-    unique.set(`${cell.row}:${cell.col}`, cell);
-  });
-
-  return [...unique.values()];
-}
-
 type SpecialCreation = {
   cluster: MatchCluster;
   position: Position;
   special: SpecialCell;
 };
+
+type MatchedSpecialActivation = SpecialChainActivation;
 
 type MatchCluster = {
   primaryGroup: MatchGroup;
@@ -213,6 +209,13 @@ function selectFirstLongMatchSpecial(
   };
 }
 
+function findMatchedSpecialActivations(board: Board, cells: Position[]) {
+  return collectSpecialChainActivations(
+    board,
+    cells.map((position) => ({ position })),
+  );
+}
+
 export type ResolveSwapResult = EngineState & {
   accepted: boolean;
   reason?: string;
@@ -289,15 +292,22 @@ export function resolveBoardMatches(
     cascadeCount += 1;
     const cells = getMatchedCells(matches);
     const points = getMatchScore(matches) * cascadeCount;
-    const specialCreation = selectFirstLongMatchSpecial(
-      clusters,
-      cascadeCount === 1 ? options.movedCell : undefined,
-    );
+    const matchedSpecialActivations = findMatchedSpecialActivations(board, cells);
+    const specialCreation =
+      matchedSpecialActivations.length === 0
+        ? selectFirstLongMatchSpecial(
+            clusters,
+            cascadeCount === 1 ? options.movedCell : undefined,
+          )
+        : null;
     const visualClearMatches = getVisualClearMatches(clusters, specialCreation);
     const visualClearedCells = getMatchedCells(visualClearMatches);
-    const cellsToClear = specialCreation
-      ? cells.filter((cell) => !isSamePosition(cell, specialCreation.position))
-      : cells;
+    const cellsToClear = uniquePositions([
+      ...(specialCreation
+        ? cells.filter((cell) => !isSamePosition(cell, specialCreation.position))
+        : cells),
+      ...matchedSpecialActivations.flatMap((activation) => activation.cells),
+    ]);
 
     clearedCells += cells.length;
     score += points;
@@ -333,6 +343,21 @@ export function resolveBoardMatches(
         special: {
           ...specialCreation.special,
         },
+      });
+    }
+    for (const activation of matchedSpecialActivations) {
+      options.onTimelineEvent?.({
+        type: 'special-wipe',
+        key: nextTimelineKey(),
+        chain: cascadeCount,
+        cause,
+        board: cloneBoard(board),
+        origin: activation.position,
+        kind: activation.special.kind,
+        cells: activation.cells,
+        triggeredBy: activation.triggeredBy,
+        triggerDelayMs: activation.triggerDelayMs,
+        targetFruit: activation.targetFruit,
       });
     }
     const collapsed = collapseBoard(cleared, options.refill);
@@ -426,33 +451,42 @@ export function resolveSwap(
       : null;
 
   if (specialActivation?.cell && isSpecialCell(specialActivation.cell)) {
-    const targetFruit =
-      specialActivation.cell.kind === 'color-clear' && specialActivation.counterpart
-        ? specialActivation.counterpart.fruit
-        : undefined;
-    const clearCells = getSpecialCellClearCells(
-      specialActivation.position,
-      specialActivation.cell.kind,
-      swapped,
-      targetFruit,
-    );
-    const clearedPositions = uniquePositions([specialActivation.position, ...clearCells]);
-    options.onTimelineEvent?.({
-      type: 'special-wipe',
-      key: 0,
-      chain: 0,
-      cause: 'swap',
-      board: cloneBoard(swapped),
-      origin: specialActivation.position,
-      kind: specialActivation.cell.kind,
-      cells: clearedPositions,
-      targetFruit,
+    const specialActivations = collectSpecialChainActivations(swapped, [
+      {
+        position: specialActivation.position,
+        targetFruit:
+          specialActivation.cell.kind === 'color-clear' && specialActivation.counterpart
+            ? specialActivation.counterpart.fruit
+            : undefined,
+      },
+    ]);
+    const clearedPositions = uniquePositions(specialActivations.flatMap((activation) => activation.cells));
+    specialActivations.forEach((activation, index) => {
+      options.onTimelineEvent?.({
+        type: 'special-wipe',
+        key: index,
+        chain: 0,
+        cause: 'swap',
+        board: cloneBoard(swapped),
+        origin: activation.position,
+        kind: activation.special.kind,
+        cells: activation.cells,
+        triggeredBy: activation.triggeredBy,
+        triggerDelayMs: activation.triggerDelayMs,
+        targetFruit:
+          activation.position.row === specialActivation.position.row &&
+          activation.position.col === specialActivation.position.col &&
+          activation.special.kind === 'color-clear' &&
+          specialActivation.counterpart
+            ? specialActivation.counterpart.fruit
+            : activation.targetFruit,
+      });
     });
     const cleared = clearMatchedCells(swapped, clearedPositions);
     const collapsed = collapseBoard(cleared, options.refill);
     options.onTimelineEvent?.({
       type: 'drop',
-      key: 1,
+      key: specialActivations.length,
       chain: 0,
       cause: 'swap',
       board: cloneNullableBoard(cleared),
@@ -471,7 +505,7 @@ export function resolveSwap(
       onReshuffle: options.onReshuffle,
       reshuffle: options.reshuffle,
       cause: 'swap',
-      timelineKeyStart: 2,
+      timelineKeyStart: specialActivations.length + 1,
     });
 
     return {

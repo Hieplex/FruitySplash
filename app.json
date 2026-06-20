@@ -23,7 +23,10 @@
           "style": "dark",
           "enforceContrast": false
         }
-      ]
+      ],
+      "expo-image",
+      "@react-native-google-signin/google-signin",
+      "expo-iap"
     ],
     "ios": {
       "supportsTablet": true
@@ -43,6 +46,21 @@
     },
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "expo-status-bar": {
+        "style": "dark",
+        "hidden": true
+      },
+      "expo-navigation-bar": {
+        "enforceContrast": false,
+        "style": "dark",
+        "hidden": true
+      },
+      "eas": {
+        "projectId": "bc52c68d-5ea3-4150-9539-124930870273"
+      }
     }
   }
 }

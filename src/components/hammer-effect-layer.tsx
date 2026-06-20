@@ -22,6 +22,7 @@ const HAMMER_SWING_DURATION_MS = 290;
 const HAMMER_IMPACT_DURATION_MS = 180;
 const HAMMER_CRACK_DURATION_MS = 480;
 const HAMMER_FADE_DURATION_MS = 240;
+const noopPress = () => undefined;
 
 export function HammerEffectLayer({
   board,
@@ -205,7 +206,7 @@ export function HammerEffectLayer({
             size={tileSize}
             imageScale={fruitImageScale}
             selected={false}
-            onPress={() => undefined}
+            onPress={noopPress}
           />
         </Animated.View>
       </View>

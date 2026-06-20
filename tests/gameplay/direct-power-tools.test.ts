@@ -28,10 +28,10 @@ describe('direct power tools', () => {
 
   it('delays LineRocket cells in rocket travel order', () => {
     expect(getLineRocketCellDelayMs({ row: 0, col: 0 }, 6, 'left-to-right')).toBe(0);
-    expect(getLineRocketCellDelayMs({ row: 0, col: 3 }, 6, 'left-to-right')).toBe(270);
-    expect(getLineRocketCellDelayMs({ row: 0, col: 5 }, 6, 'left-to-right')).toBe(450);
+    expect(getLineRocketCellDelayMs({ row: 0, col: 3 }, 6, 'left-to-right')).toBe(420);
+    expect(getLineRocketCellDelayMs({ row: 0, col: 5 }, 6, 'left-to-right')).toBe(700);
     expect(getLineRocketCellDelayMs({ row: 0, col: 5 }, 6, 'right-to-left')).toBe(0);
-    expect(getLineRocketCellDelayMs({ row: 0, col: 2 }, 6, 'right-to-left')).toBe(270);
-    expect(getLineRocketCellDelayMs({ row: 0, col: 0 }, 6, 'right-to-left')).toBe(450);
+    expect(getLineRocketCellDelayMs({ row: 0, col: 2 }, 6, 'right-to-left')).toBe(420);
+    expect(getLineRocketCellDelayMs({ row: 0, col: 0 }, 6, 'right-to-left')).toBe(700);
   });
 });

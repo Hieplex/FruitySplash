@@ -1,10 +1,12 @@
+import { memo } from 'react';
 import { Image, Pressable, View, type ImageSourcePropType } from 'react-native';
 import { SvgXml } from 'react-native-svg';
-import { fruitRuntimeAssetIds, fruitRuntimeAssets } from '@/game/assets/runtime-assets';
+import { fruitRuntimeAssetIds, fruitRuntimeAssets, specialFruitRuntimeAssets } from '@/game/assets/runtime-assets';
+import { getSpecialFruitAssetVariant } from '@/game/special-fruit-assets';
 import type { SpecialCellKind, SpecialMatchTier } from '@/game/types';
 import { colors, fruitAccentColors } from '@/theme/colors';
 
-export function FruitTileImage({
+export const FruitTileImage = memo(function FruitTileImage({
   uri,
   svg,
   source,
@@ -18,25 +20,17 @@ export function FruitTileImage({
   opacity?: number;
 }) {
   if (source) {
-    return <Image source={source} fadeDuration={0} style={{ width: size, height: size, opacity }} resizeMode="contain" />;
+    return <Image source={source} fadeDuration={0} style={{ width: size, height: size, opacity }} resizeMode="contain" resizeMethod="resize" />;
   }
 
   if (svg) {
     return <SvgXml xml={svg} width={size} height={size} opacity={opacity} />;
   }
 
-  return <Image source={{ uri } satisfies ImageSourcePropType} fadeDuration={0} style={{ width: size, height: size, opacity }} />;
-}
+  return <Image source={{ uri } satisfies ImageSourcePropType} fadeDuration={0} style={{ width: size, height: size, opacity }} resizeMethod="resize" />;
+});
 
-export function FruitTile({
-  fruit,
-  size,
-  imageScale = 1.28,
-  selected,
-  special = null,
-  onPress,
-  disabled = false,
-}: {
+type FruitTileProps = {
   fruit: number;
   size: number;
   imageScale?: number;
@@ -47,9 +41,21 @@ export function FruitTile({
   } | null;
   onPress: () => void;
   disabled?: boolean;
-}) {
+};
+
+export const FruitTile = memo(function FruitTile({
+  fruit,
+  size,
+  imageScale = 1.28,
+  selected,
+  special = null,
+  onPress,
+  disabled = false,
+}: FruitTileProps) {
   const assetId = fruitRuntimeAssetIds[fruit] ?? fruitRuntimeAssetIds[0];
   const asset = fruitRuntimeAssets[assetId];
+  const specialVariant = special ? getSpecialFruitAssetVariant(special.kind) : null;
+  const specialAsset = specialVariant ? specialFruitRuntimeAssets[assetId]?.[specialVariant] : null;
   const accent = fruitAccentColors[fruit] ?? colors.coral;
   const imageSize = Math.round(size * imageScale);
   const markerColor =
@@ -79,8 +85,8 @@ export function FruitTile({
         elevation: selected ? 4 : 0,
       }}
     >
-      <FruitTileImage source={asset} uri="" size={imageSize} />
-      {special ? (
+      <FruitTileImage source={specialAsset ?? asset} uri="" size={imageSize} />
+      {special && !specialAsset ? (
         <>
           <View
             pointerEvents="none"
@@ -153,5 +159,18 @@ export function FruitTile({
         </>
       ) : null}
     </Pressable>
+  );
+}, areFruitTilePropsEqual);
+
+function areFruitTilePropsEqual(previous: FruitTileProps, next: FruitTileProps) {
+  return (
+    previous.fruit === next.fruit &&
+    previous.size === next.size &&
+    (previous.imageScale ?? 1.28) === (next.imageScale ?? 1.28) &&
+    previous.selected === next.selected &&
+    previous.disabled === next.disabled &&
+    previous.onPress === next.onPress &&
+    previous.special?.kind === next.special?.kind &&
+    previous.special?.powerTier === next.special?.powerTier
   );
 }

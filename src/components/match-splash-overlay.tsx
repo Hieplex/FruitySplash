@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Animated, View, Easing } from 'react-native';
 import { MATCH_SPLASH_LAYER_DEPTH } from '@/components/game-board-layer-depths';
 import { fruitRuntimeAssetIds, fruitRuntimeAssets, vfxRuntimeAssets } from '@/game/assets/runtime-assets';
@@ -50,7 +50,18 @@ function shiftWindow(startAt: number, peakAt: number, endAt: number, offset: num
   };
 }
 
-export function MatchSplashOverlay({
+function getSparkleLimitForCellCount(cellCount: number) {
+  if (cellCount >= 6) {
+    return 3;
+  }
+  if (cellCount >= 5) {
+    return 4;
+  }
+
+  return 5;
+}
+
+export const MatchSplashOverlay = memo(function MatchSplashOverlay({
   splash,
   tileSize,
   fruitImageScale,
@@ -68,6 +79,25 @@ export function MatchSplashOverlay({
   const progress = useRef(new Animated.Value(0)).current;
   const onCompleteRef = useRef(onComplete);
   const cells = useMemo(() => splash?.cells.slice(0, 18) ?? [], [splash]);
+  const plannedCells = useMemo(() => {
+    if (!splash) {
+      return [];
+    }
+
+    const sparkleLimit = getSparkleLimitForCellCount(cells.length);
+
+    return cells.map((cell) => ({
+      cell,
+      assetId: fruitRuntimeAssetIds[cell.fruit] ?? fruitRuntimeAssetIds[0],
+      plan: createMatchSplashParticlePlan({
+        key: splash.key,
+        row: cell.row,
+        col: cell.col,
+        fruit: cell.fruit,
+        sparkleLimit,
+      }),
+    }));
+  }, [cells, splash]);
   const maxDelayMs = useMemo(
     () => cells.reduce((current, cell) => Math.max(current, cell.delayMs ?? 0), 0),
     [cells],
@@ -120,7 +150,7 @@ export function MatchSplashOverlay({
         elevation: MATCH_SPLASH_LAYER_DEPTH.elevation,
       }}
     >
-      {cells.map((cell, cellIndex) => {
+      {plannedCells.map(({ cell, assetId, plan }, cellIndex) => {
         const center = tileSize / 2;
         const cellDelayMs = cell.delayMs ?? 0;
         const totalDuration = Math.max(1, totalDurationMs);
@@ -128,13 +158,6 @@ export function MatchSplashOverlay({
         const preShrinkEndAt =
           preShrinkMs > 0 ? (cellDelayMs + preShrinkMs) / totalDuration : preShrinkStartAt;
         const preShrinkHoldAt = Math.max(0, preShrinkStartAt - 0.001);
-        const plan = createMatchSplashParticlePlan({
-          key: splash.key,
-          row: cell.row,
-          col: cell.col,
-          fruit: cell.fruit,
-        });
-        const assetId = fruitRuntimeAssetIds[cell.fruit] ?? fruitRuntimeAssetIds[0];
         const fruitImageSize = Math.round(tileSize * fruitImageScale);
         const mysteryCloudSize = Math.round(tileSize * 1.5);
         const coreFlashSize = Math.round(tileSize * 1.02);
@@ -286,4 +309,4 @@ export function MatchSplashOverlay({
       })}
     </View>
   );
-}
+});

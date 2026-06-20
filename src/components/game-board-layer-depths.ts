@@ -1,4 +1,4 @@
-import type { SpecialCellKind } from '@/game/types';
+import type { SpecialCellKind, SpecialWipeSourceTool } from '@/game/types';
 
 export type GameBoardLayerDepth = {
   zIndex: number;
@@ -30,18 +30,26 @@ export const FRUITY_CROSS_WIPE_LAYER_DEPTH: GameBoardLayerDepth = {
   elevation: 21,
 };
 
+export const LIGHTNING_FRUITS_WIPE_LAYER_DEPTH: GameBoardLayerDepth = {
+  zIndex: 23,
+  elevation: 23,
+};
+
 export function getSpecialWipeLayerDepth({
   kind,
   sourceTool,
 }: {
   kind: SpecialCellKind;
-  sourceTool?: 'lineRocket' | 'fruityCross';
+  sourceTool?: SpecialWipeSourceTool;
 }): GameBoardLayerDepth {
   if (kind === 'row-wipe' && sourceTool === 'lineRocket') {
     return LINE_ROCKET_WIPE_LAYER_DEPTH;
   }
   if (kind === 'cross-wipe' && sourceTool === 'fruityCross') {
     return FRUITY_CROSS_WIPE_LAYER_DEPTH;
+  }
+  if (kind === 'color-clear' && sourceTool === 'lightningFruits') {
+    return LIGHTNING_FRUITS_WIPE_LAYER_DEPTH;
   }
 
   return SPECIAL_WIPE_LAYER_DEPTH;

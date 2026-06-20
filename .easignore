@@ -1,0 +1,49 @@
+# Dependencies and generated build output
+node_modules/
+.git/
+/.git/
+.git
+.git/**
+.expo/
+.eas-inspect-archive/
+dist/
+web-build/
+android/
+ios/
+.gradle/
+.kotlin/
+
+# Local secrets and credentials
+.env*.local
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+
+# Local debug/profiling artifacts
+artifacts/
+coverage/
+perf-*.txt
+codex-*.png
+codex-*.mp4
+phone-*.png
+emulator-*.png
+codex-motion-frames/
+
+# Repo-only docs, tests, and helper scripts
+docs/
+tests/
+scripts/
+TODO.md
+vitest.config.ts
+
+# Tooling noise
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.tsbuildinfo
+expo-env.d.ts
+.DS_Store
+*.orig.*

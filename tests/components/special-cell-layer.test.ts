@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -8,6 +10,7 @@ import {
   createFruityCrossSplitWindow,
   createFruityCrossVisualPlan,
   createSpecialMergePlan,
+  getSpecialMergeAnimationDurationMs,
   createSpecialWipePlan,
 } from '@/components/special-cell-layer-plan';
 
@@ -20,6 +23,22 @@ function expectMonotonic(values: number[]) {
 }
 
 describe('special cell layer plans', () => {
+  it('does not render extra directed wipe line or ring overlays for special clears', () => {
+    const layerSource = readFileSync(join(process.cwd(), 'src/components/special-cell-layer.tsx'), 'utf8');
+
+    expect(layerSource).not.toContain('renderOriginDirectedWipeSegments');
+    expect(layerSource).not.toContain('-segment-');
+    expect(layerSource).not.toContain('borderWidth: Math.max(2, Math.round(tileSize * 0.06))');
+  });
+
+  it('renders normal special wipe fruit clears separately from booster animations', () => {
+    const layerSource = readFileSync(join(process.cwd(), 'src/components/special-cell-layer.tsx'), 'utf8');
+
+    expect(layerSource).toContain('const renderNormalSpecialWipeCellClears = () =>');
+    expect(layerSource).toContain('!isFruityCrossWipe && !isLineRocketWipe && !isLightningFruitsWipe');
+    expect(layerSource).toContain('{renderNormalSpecialWipeCellClears()}');
+  });
+
   it('creates a merge plan that preserves the target cell and source count', () => {
     expect(
       createSpecialMergePlan({
@@ -33,6 +52,22 @@ describe('special cell layer plans', () => {
       targetCell: { row: 2, col: 3 },
       sourceCount: 2,
     });
+  });
+
+  it('keeps special merge animation alive for a carried target drop', () => {
+    expect(
+      getSpecialMergeAnimationDurationMs({
+        mergeDurationMs: 420,
+        mergeTargetDropTotalDurationMs: 760,
+      }),
+    ).toBe(760);
+
+    expect(
+      getSpecialMergeAnimationDurationMs({
+        mergeDurationMs: 420,
+        mergeTargetDropTotalDurationMs: 0,
+      }),
+    ).toBe(420);
   });
 
   it('creates a row wipe plan with horizontal sweep bounds', () => {

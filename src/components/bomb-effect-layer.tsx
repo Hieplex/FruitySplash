@@ -1,15 +1,28 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, View, type ImageSourcePropType } from 'react-native';
-import { isBombEffectCell, type BombDropAnimation } from '@/components/bomb-effect-cell';
+import {
+  getBombExplosionFrame,
+  getBombShockwaveFrame,
+  getBombShockwaveScaleRange,
+  isBombEffectCell,
+  type BombDropAnimation,
+} from '@/components/bomb-effect-cell';
 import { FruitTile } from '@/components/fruit-tile';
 import { getCellFruit } from '@/game/board';
 import { vfxRuntimeAssets } from '@/game/assets/runtime-assets';
 import type { Board } from '@/game/types';
+import {
+  BOMB_DROP_DURATION_MS,
+  BOMB_IMPACT_DURATION_MS,
+  BOMB_POP_DURATION_MS,
+  BOMB_SHOCKWAVE_DURATION_MS,
+} from '@/gameplay/match-vfx-timing';
 
 type BombEffectLayerProps = {
   board: Board;
   animation: BombDropAnimation;
   source?: ImageSourcePropType;
+  explosionSource?: ImageSourcePropType;
   tileSize: number;
   gap: number;
   boardPadding: number;
@@ -17,19 +30,16 @@ type BombEffectLayerProps = {
   onComplete?: (key: number) => void;
 };
 
-const BOMB_DROP_DURATION_MS = 430;
-const BOMB_IMPACT_DURATION_MS = 680;
-const BOMB_SHOCKWAVE_DURATION_MS = 620;
-const BOMB_SHOCKWAVE_LEAD_MS = 120;
-const BOMB_POP_DURATION_MS = 420;
 const BOMB_SHAKE_DISTANCE = 7;
+const BOMB_IMAGE_SHAKE_DISTANCE = 16;
 const BOMB_LAND_OFFSET_Y = -5;
-const BOMB_SHOCKWAVE_SIZE_MULTIPLIER = 3.2;
+const noopPress = () => undefined;
 
 export function BombEffectLayer({
   board,
   animation,
   source,
+  explosionSource,
   tileSize,
   gap,
   boardPadding,
@@ -62,11 +72,11 @@ export function BombEffectLayer({
 
     const popStartTimeout = setTimeout(() => {
       setBombPopActive(true);
-    }, BOMB_DROP_DURATION_MS + BOMB_IMPACT_DURATION_MS - BOMB_SHOCKWAVE_LEAD_MS + BOMB_SHOCKWAVE_DURATION_MS);
+    }, BOMB_DROP_DURATION_MS + BOMB_IMPACT_DURATION_MS);
     const impactAnimation = Animated.timing(bombImpactProgress, {
       toValue: 1,
       duration: BOMB_IMPACT_DURATION_MS,
-      easing: Easing.out(Easing.quad),
+      easing: Easing.inOut(Easing.quad),
       useNativeDriver: true,
     });
     const shockwaveAnimation = Animated.timing(bombShockwaveProgress, {
@@ -87,11 +97,8 @@ export function BombEffectLayer({
         duration: BOMB_DROP_DURATION_MS,
         useNativeDriver: true,
       }),
-      Animated.parallel([
-        impactAnimation,
-        Animated.sequence([Animated.delay(BOMB_IMPACT_DURATION_MS - BOMB_SHOCKWAVE_LEAD_MS), shockwaveAnimation]),
-      ]),
-      popAnimation,
+      impactAnimation,
+      Animated.parallel([shockwaveAnimation, popAnimation]),
     ]);
 
     animationSequence.start(({ finished }) => {
@@ -107,12 +114,20 @@ export function BombEffectLayer({
   }, [animation, bombDropProgress, bombImpactProgress, bombPopProgress, bombShockwaveProgress]);
 
   const bombShockwaveScale = bombShockwaveProgress.interpolate({
-    inputRange: [0, 0.16, 0.72, 1],
-    outputRange: [0.3, 0.72, BOMB_SHOCKWAVE_SIZE_MULTIPLIER, BOMB_SHOCKWAVE_SIZE_MULTIPLIER + 0.2],
+    inputRange: [0, 0.18, 0.74, 1],
+    outputRange: getBombShockwaveScaleRange(),
   });
   const bombShockwaveOpacity = bombShockwaveProgress.interpolate({
-    inputRange: [0, 0.12, 0.68, 1],
-    outputRange: [0, 1, 1, 0],
+    inputRange: [0, 0.08, 0.72, 1],
+    outputRange: [0, 1, 0.9, 0],
+  });
+  const bombExplosionScale = bombShockwaveProgress.interpolate({
+    inputRange: [0, 0.16, 0.52, 1],
+    outputRange: [0.05, 0.82, 1.08, 1.18],
+  });
+  const bombExplosionOpacity = bombShockwaveProgress.interpolate({
+    inputRange: [0, 0.08, 0.68, 1],
+    outputRange: [0, 1, 0.95, 0],
   });
   const bombPopScaleX = bombPopProgress.interpolate({
     inputRange: [0, 0.18, 0.32, 0.5, 1],
@@ -135,14 +150,12 @@ export function BombEffectLayer({
     outputRange: [1, 1, 0.28, 0],
   });
   const shockwavePosition = useMemo(() => {
-    const ringSize = Math.round(tileSize * 1.2);
-
-    return {
-      size: ringSize,
-      x: animation.target.col * (tileSize + gap) + tileSize / 2 - ringSize / 2,
-      y: animation.target.row * (tileSize + gap) + tileSize / 2 - ringSize / 2,
-    };
+    return getBombShockwaveFrame(animation.target, tileSize, gap);
   }, [animation.target.col, animation.target.row, gap, tileSize]);
+  const bombExplosionFrame = useMemo(
+    () => getBombExplosionFrame(shockwavePosition),
+    [shockwavePosition],
+  );
   const bombPosition = useMemo(() => {
     const size = Math.round(tileSize * 2.04);
 
@@ -161,20 +174,31 @@ export function BombEffectLayer({
     outputRange: ['-18deg', '0deg'],
   });
   const bombScale = bombImpactProgress.interpolate({
-    inputRange: [0, 0.18, 0.7, 1],
-    outputRange: [1, 1.2, 1.2, 0.03],
+    inputRange: [0, 0.18, 0.36, 0.54, 0.72, 1],
+    outputRange: [1, 1.28, 1.08, 1.38, 1.16, 0.02],
   });
   const bombImpactShakeX = bombImpactProgress.interpolate({
-    inputRange: [0, 0.18, 0.3, 0.42, 0.56, 0.72, 1],
-    outputRange: [0, 0, -7, 7, -5, 3, 0],
+    inputRange: [0, 0.12, 0.2, 0.29, 0.38, 0.47, 0.56, 0.65, 0.74, 1],
+    outputRange: [
+      0,
+      0,
+      -BOMB_IMAGE_SHAKE_DISTANCE,
+      BOMB_IMAGE_SHAKE_DISTANCE,
+      -BOMB_IMAGE_SHAKE_DISTANCE * 0.9,
+      BOMB_IMAGE_SHAKE_DISTANCE * 0.82,
+      -BOMB_IMAGE_SHAKE_DISTANCE * 0.68,
+      BOMB_IMAGE_SHAKE_DISTANCE * 0.54,
+      -BOMB_IMAGE_SHAKE_DISTANCE * 0.34,
+      0,
+    ],
   });
   const bombImpactRotate = bombImpactProgress.interpolate({
-    inputRange: [0, 0.18, 0.34, 0.5, 0.68, 1],
-    outputRange: ['0deg', '0deg', '-5deg', '4deg', '-2deg', '0deg'],
+    inputRange: [0, 0.18, 0.3, 0.42, 0.54, 0.66, 0.8, 1],
+    outputRange: ['0deg', '0deg', '-9deg', '8deg', '-7deg', '5deg', '-3deg', '0deg'],
   });
   const bombOpacity = bombImpactProgress.interpolate({
-    inputRange: [0, 0.75, 1],
-    outputRange: [1, 1, 0],
+    inputRange: [0, 0.82, 0.98, 1],
+    outputRange: [1, 1, 1, 0],
   });
 
   const getBombShakeTransform = (rowIndex: number, colIndex: number) => {
@@ -243,7 +267,7 @@ export function BombEffectLayer({
                   size={tileSize}
                   imageScale={fruitImageScale}
                   selected={false}
-                  onPress={() => undefined}
+                  onPress={noopPress}
                 />
               </Animated.View>
             );
@@ -276,6 +300,22 @@ export function BombEffectLayer({
             transform: [{ scale: bombShockwaveScale }],
           }}
         />
+        {explosionSource ? (
+          <Animated.Image
+            source={explosionSource}
+            fadeDuration={0}
+            resizeMode="contain"
+            style={{
+              position: 'absolute',
+              top: bombExplosionFrame.y,
+              left: bombExplosionFrame.x,
+              width: bombExplosionFrame.size,
+              height: bombExplosionFrame.size,
+              opacity: bombExplosionOpacity,
+              transform: [{ scale: bombExplosionScale }],
+            }}
+          />
+        ) : null}
       </View>
       {source ? (
         <View

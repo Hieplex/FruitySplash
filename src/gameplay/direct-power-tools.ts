@@ -2,7 +2,7 @@ import type { SpecialCellKind } from '@/game/types';
 import type { Position } from '@/game/types';
 
 export const DIRECT_SPECIAL_POWER_TOOL_IDS = ['lineRocket', 'fruityCross', 'lightningFruits'] as const;
-export const LINE_ROCKET_WAVE_STEP_MS = 90;
+export const LINE_ROCKET_WAVE_STEP_MS = 140;
 
 export type DirectSpecialPowerTool = (typeof DIRECT_SPECIAL_POWER_TOOL_IDS)[number];
 export type LineRocketTravelDirection = 'left-to-right' | 'right-to-left';

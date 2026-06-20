@@ -15,13 +15,16 @@ describe('player economy helpers', () => {
     expect(createDefaultPlayerState()).toMatchObject({
       wallet: { coins: 0 },
       lives: {
-        current: 5,
-        max: 5,
+        current: 30,
+        max: 30,
       },
       inventory: {
         boosters: {
-          bomb: 5,
-          hammer: 5,
+          bomb: 3,
+          lineRocket: 3,
+          fruityCross: 3,
+          lightningFruits: 3,
+          hammer: 0,
         },
       },
     });
@@ -57,18 +60,19 @@ describe('player economy helpers', () => {
       ...createDefaultPlayerState(),
       lives: {
         current: 0,
-        max: 5,
+        max: 30,
+        lastRefillAt: 1_000,
       },
     };
 
-    expect(addLives(emptyLives, 10).lives.current).toBe(5);
+    expect(addLives(emptyLives, 40).lives.current).toBe(30);
     expect(consumeLife(emptyLives)).toMatchObject({ consumed: false, state: emptyLives });
     expect(consumeLife(addLives(emptyLives, 1))).toMatchObject({
       consumed: true,
       state: {
         lives: {
           current: 0,
-          max: 5,
+          max: 30,
         },
       },
     });
@@ -82,8 +86,11 @@ describe('player economy helpers', () => {
       state: {
         inventory: {
           boosters: {
-            bomb: 6,
-            hammer: 5,
+            bomb: 4,
+            lineRocket: 3,
+            fruityCross: 3,
+            lightningFruits: 3,
+            hammer: 0,
           },
         },
       },
@@ -96,7 +103,10 @@ describe('player economy helpers', () => {
           inventory: {
             boosters: {
               bomb: 0,
-              hammer: 5,
+              lineRocket: 3,
+              fruityCross: 3,
+              lightningFruits: 3,
+              hammer: 0,
             },
           },
         },
@@ -115,7 +125,7 @@ describe('player economy helpers', () => {
         bestScoreByLevel: { 1: 1800 },
         soundEnabled: false,
       }),
-    ).toEqual({
+    ).toMatchObject({
       unlockedLevel: 3,
       starsByLevel: { 1: 3 },
       bestScoreByLevel: { 1: 1800 },
@@ -125,16 +135,20 @@ describe('player economy helpers', () => {
       },
       inventory: {
         boosters: {
-          bomb: 5,
-          hammer: 5,
+          bomb: 3,
+          lineRocket: 3,
+          fruityCross: 3,
+          lightningFruits: 3,
+          hammer: 0,
         },
       },
       lives: {
-        current: 5,
-        max: 5,
+        current: 30,
+        max: 30,
       },
       rewardClaims: {
         levelFirstClear: {},
+        levelStarReward: {},
       },
     });
   });
@@ -161,13 +175,16 @@ describe('player economy helpers', () => {
         coins: 12,
       },
       lives: {
-        current: 4,
-        max: 4,
+        current: 30,
+        max: 30,
       },
       inventory: {
         boosters: {
           bomb: 0,
-          hammer: 5,
+          lineRocket: 3,
+          fruityCross: 3,
+          lightningFruits: 3,
+          hammer: 0,
         },
       },
     });

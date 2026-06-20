@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isBombEffectCell, type BombDropAnimation } from '@/components/bomb-effect-cell';
+import {
+  getBombExplosionFrame,
+  getBombShockwaveFrame,
+  getBombShockwaveScaleRange,
+  isBombEffectCell,
+  type BombDropAnimation,
+} from '@/components/bomb-effect-cell';
 
 describe('BombEffectLayer', () => {
   const animation: BombDropAnimation = {
@@ -17,5 +23,22 @@ describe('BombEffectLayer', () => {
 
   it('does not hide cells when no bomb effect is active', () => {
     expect(isBombEffectCell(null, 3, 3)).toBe(false);
+  });
+
+  it('insets the explosion inside the shockwave frame', () => {
+    expect(getBombExplosionFrame({ x: 10, y: 20, size: 90 })).toEqual({
+      x: 23,
+      y: 33,
+      size: 64,
+    });
+  });
+
+  it('sizes the shockwave to the blue-ring footprint without overscaling', () => {
+    expect(getBombShockwaveFrame({ row: 2, col: 3 }, 40, 4)).toEqual({
+      x: 97,
+      y: 53,
+      size: 200000,
+    });
+    expect(getBombShockwaveScaleRange()).toEqual([0.05, 0.42, 1, 1]);
   });
 });

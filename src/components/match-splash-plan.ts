@@ -5,6 +5,7 @@ type MatchSplashParticlePlanInput = {
   row: number;
   col: number;
   fruit: number;
+  sparkleLimit?: number;
 };
 
 export type SparkleParticle = {
@@ -28,7 +29,7 @@ function seededRange(seed: number, min: number, max: number) {
   return min + seededUnit(seed) * (max - min);
 }
 
-function createSparkles(baseSeed: number): SparkleParticle[] {
+function createSparkles(baseSeed: number, limit = Number.POSITIVE_INFINITY): SparkleParticle[] {
   const sparkleBase = [
     { startX: 0, startY: 0, driftX: 0, driftY: 0, size: 1.45, opacity: 1, delayMs: 70 },
     { startX: -0.34, startY: -0.24, driftX: -0.24, driftY: -0.22, size: 0.78, opacity: 0.98, delayMs: 110 },
@@ -37,7 +38,7 @@ function createSparkles(baseSeed: number): SparkleParticle[] {
     { startX: 0.26, startY: 0.28, driftX: 0.2, driftY: 0.22, size: 0.52, opacity: 0.9, delayMs: 210 },
   ] as const;
 
-  return sparkleBase.map((sparkle, index) => {
+  return sparkleBase.slice(0, Math.max(0, limit)).map((sparkle, index) => {
     const seedBase = baseSeed + index * 149 + 700;
 
     return {
@@ -52,7 +53,7 @@ function createSparkles(baseSeed: number): SparkleParticle[] {
   });
 }
 
-export function createMatchSplashParticlePlan({ key, row, col, fruit }: MatchSplashParticlePlanInput) {
+export function createMatchSplashParticlePlan({ key, row, col, fruit, sparkleLimit }: MatchSplashParticlePlanInput) {
   const baseSeed = key * 101 + row * 37 + col * 53;
   const assetId = matchSplashFruitAssetIds[fruit] ?? matchSplashFruitAssetIds[0];
 
@@ -69,6 +70,6 @@ export function createMatchSplashParticlePlan({ key, row, col, fruit }: MatchSpl
       scale: 1.02 + seededRange(baseSeed + 900, 0, 0.075),
       rotate: `${Math.round(seededRange(baseSeed + 901, -10, 10))}deg`,
     },
-    sparkles: createSparkles(baseSeed),
+    sparkles: createSparkles(baseSeed, sparkleLimit),
   };
 }

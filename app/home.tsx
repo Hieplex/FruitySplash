@@ -1,100 +1,101 @@
-import { Animated, BackHandler, Image, ImageBackground, Pressable, View } from 'react-native';
+import { ActivityIndicator, Image, ImageBackground, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
+import { warmTreeMapAssets } from '@/game/assets/preload-assets.native';
 import { backgroundRuntimeAssets, uiRuntimeAssets } from '@/game/assets/runtime-assets';
+import { useGoogleAuth } from '@/state/google-auth';
 import { useScreenWipe } from '@/state/screen-wipe';
-import { spacing } from '@/theme/spacing';
+import { colors } from '@/theme/colors';
+
+const MIN_SPLASH_MS = 800;
+const AUTH_FALLBACK_MS = 2200;
+const MAP_NAVIGATION_FALLBACK_MS = 1200;
 
 export default function HomeScreen() {
+  const router = useRouter();
   const screenWipe = useScreenWipe();
-  const playScale = useRef(new Animated.Value(1)).current;
-  const exitScale = useRef(new Animated.Value(1)).current;
-  const [showLogo, setShowLogo] = useState(false);
+  const googleAuth = useGoogleAuth();
+  const openedAt = useRef(Date.now());
+  const fallbackTimerDone = useRef(false);
+  const [readyToEnter, setReadyToEnter] = useState(false);
 
   useEffect(() => {
-    const timer = setTimeout(() => setShowLogo(true), 120);
-    return () => clearTimeout(timer);
+    let cancelled = false;
+
+    void warmTreeMapAssets().finally(() => {
+      if (!cancelled) {
+        screenWipe.setScreenReady();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [screenWipe]);
+
+  useEffect(() => {
+    const fallbackTimer = setTimeout(() => {
+      fallbackTimerDone.current = true;
+      setReadyToEnter(true);
+    }, AUTH_FALLBACK_MS);
+
+    return () => clearTimeout(fallbackTimer);
   }, []);
 
   useEffect(() => {
-    if (!showLogo) {
+    if (!googleAuth.initialized && !fallbackTimerDone.current) {
       return;
     }
 
-    screenWipe.setScreenReady();
-  }, [screenWipe, showLogo]);
+    const elapsedMs = Date.now() - openedAt.current;
+    const delayMs = Math.max(0, MIN_SPLASH_MS - elapsedMs);
+    const timer = setTimeout(() => {
+      setReadyToEnter(true);
+    }, delayMs);
 
-  function animateTo(scale: Animated.Value, value: number) {
-    Animated.spring(scale, {
-      toValue: value,
-      useNativeDriver: true,
-      speed: 22,
-      bounciness: 8,
-    }).start();
-  }
+    return () => clearTimeout(timer);
+  }, [googleAuth.initialized]);
+
+  useEffect(() => {
+    if (!readyToEnter) {
+      return;
+    }
+
+    screenWipe.replace('/map');
+    const fallbackTimer = setTimeout(() => {
+      router.replace('/map');
+    }, MAP_NAVIGATION_FALLBACK_MS);
+
+    return () => clearTimeout(fallbackTimer);
+  }, [readyToEnter, router, screenWipe]);
 
   return (
     <View style={{ flex: 1 }}>
       <ImageBackground source={backgroundRuntimeAssets.menu} fadeDuration={0} resizeMode="cover" style={{ flex: 1 }}>
-        {showLogo ? (
-          <Image
-            source={uiRuntimeAssets.gameLogo}
-            fadeDuration={0}
-            resizeMode="contain"
-            style={{
-              position: 'absolute',
-              top: -250,
-              alignSelf: 'center',
-              width: '90%',
-              aspectRatio: 1.5,
-            }}
-          />
-        ) : null}
+        <Image
+          source={uiRuntimeAssets.gameLogo}
+          fadeDuration={0}
+          resizeMode="contain"
+          style={{
+            position: 'absolute',
+            top: 18,
+            alignSelf: 'center',
+            width: '88%',
+            maxHeight: 180,
+            aspectRatio: 1.5,
+          }}
+        />
         <View
           style={{
             position: 'absolute',
             left: 0,
             right: 0,
-            bottom: 44,
+            bottom: '18%',
             alignItems: 'center',
-            gap: spacing.sm,
-            zIndex: 10,
-            elevation: 10,
+            justifyContent: 'center',
           }}
         >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Play"
-            onPress={() => screenWipe.replace('/chapters')}
-            onPressIn={() => animateTo(playScale, 0.94)}
-            onPressOut={() => animateTo(playScale, 1)}
-            style={{ width: 260, height: 92 }}
-          >
-            <Animated.View style={{ width: '100%', height: '100%', transform: [{ scale: playScale }] }}>
-              <Image
-                source={uiRuntimeAssets.buttonPlay}
-                fadeDuration={0}
-                resizeMode="contain"
-                style={{ width: '100%', height: '100%' }}
-              />
-            </Animated.View>
-          </Pressable>
-            <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Exit"
-            onPress={() => BackHandler.exitApp()}
-            onPressIn={() => animateTo(exitScale, 0.94)}
-            onPressOut={() => animateTo(exitScale, 1)}
-            style={{ width: 350, height: 135 }}
-          >
-            <Animated.View style={{ width: '100%', height: '100%', transform: [{ scale: exitScale }] }}>
-              <Image
-                source={uiRuntimeAssets.buttonExit}
-                fadeDuration={0}
-                resizeMode="contain"
-                style={{ width: '100%', height: '100%' }}
-              />
-            </Animated.View>
-          </Pressable>
+          <ActivityIndicator color={colors.cocoa} size="large" />
         </View>
       </ImageBackground>
     </View>

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Animated, Easing, View } from 'react-native';
-import { FruitTile } from '@/components/fruit-tile';
+import { FruitTile, FruitTileImage } from '@/components/fruit-tile';
 import {
   SPECIAL_MERGE_LAYER_DEPTH,
   getSpecialWipeLayerDepth,
@@ -10,15 +10,20 @@ import {
   createFruityCrossVisualPlan,
   createSpecialMergePlan,
   createSpecialWipePlan,
+  getSpecialMergeAnimationDurationMs,
   type FruityCrossVisualDirection,
 } from '@/components/special-cell-layer-plan';
 import { createMatchSplashParticlePlan } from '@/components/match-splash-plan';
-import { fruitRuntimeAssetIds, fruitRuntimeAssets, uiRuntimeAssets, vfxRuntimeAssets } from '@/game/assets/runtime-assets';
+import { fruitRuntimeAssetIds, fruitRuntimeAssets, specialFruitRuntimeAssets, uiRuntimeAssets, vfxRuntimeAssets } from '@/game/assets/runtime-assets';
 import { getCellFruit, isSpecialCell } from '@/game/board';
-import type { Board, Fruit, Position, RowClearTravelDirection, SpecialCell, SpecialCellKind } from '@/game/types';
+import { getSpecialFruitAssetVariant } from '@/game/special-fruit-assets';
+import type { Board, DropMotion, Fruit, Position, RowClearTravelDirection, SpecialCell, SpecialCellKind, SpecialWipeSourceTool } from '@/game/types';
+import type { SpecialWipeChain } from '@/gameplay/match-cascade';
 import { getLineRocketCellDelayMs } from '@/gameplay/direct-power-tools';
+import type { DropMotionTiming } from '@/gameplay/drop-timing';
 import {
   FRUITY_CROSS_GROUP_DROP_MS,
+  LIGHTNING_FRUITS_CONTACT_RATIO,
   SPECIAL_WIPE_PRE_SHRINK_MS,
   SPECIAL_WIPE_SPLASH_DURATION_MS,
   getFruityCrossClearDelayMs,
@@ -26,9 +31,9 @@ import {
   getFruityCrossTravelEndMs,
   getLineRocketFadeStartMs,
   getLineRocketTravelEndMs,
+  getSpecialWipeMaxDelayMs,
   getSpecialWipeDelayMs,
 } from '@/gameplay/match-vfx-timing';
-import { getSpecialWipeMaxDelayMs } from '@/gameplay/match-vfx-timing';
 
 export type SpecialMergeAnimation = {
   key: number;
@@ -46,14 +51,16 @@ export type SpecialWipeAnimation = {
   origin: Position;
   kind: SpecialCellKind;
   cells: Position[];
+  chainedWipes?: SpecialWipeChain[];
   targetFruit?: Fruit;
-  sourceTool?: 'lineRocket' | 'fruityCross';
+  sourceTool?: SpecialWipeSourceTool;
   rowTravelDirection?: RowClearTravelDirection;
   preDelayMs?: number;
   durationMs?: number;
   previewOnly?: boolean;
   groupDropCompleted?: boolean;
   initialElapsedMs?: number;
+  suppressLightningOverlay?: boolean;
 };
 
 type SpecialCellLayerProps = {
@@ -63,6 +70,10 @@ type SpecialCellLayerProps = {
   gap: number;
   boardPadding: number;
   fruitImageScale: number;
+  mergeTargetDropMotion?: DropMotion;
+  mergeTargetDropTiming?: DropMotionTiming;
+  mergeTargetDropProgress?: Animated.Value;
+  mergeTargetDropTotalDurationMs?: number;
   onMergeComplete?: (key: number) => void;
   onWipeComplete?: (key: number) => void;
 };
@@ -77,6 +88,21 @@ const FRUITY_CROSS_CLOUD_PEAK_MS = 60;
 const FRUITY_CROSS_CLOUD_FADE_MS = 155;
 const FRUITY_CROSS_SPARKLE_START_MS = 18;
 const FRUITY_CROSS_SPARKLE_DURATION_MS = 110;
+const LIGHTNING_STRIKE_START_AT = 0.08;
+const LIGHTNING_STRIKE_CONTACT_AT = LIGHTNING_FRUITS_CONTACT_RATIO;
+const LIGHTNING_STRIKE_HOLD_END_AT = 0.68;
+const LIGHTNING_STRIKE_FADE_END_AT = 0.86;
+const LIGHTNING_STRIKE_BOTTOM_ALPHA_INSET = 76 / 1254;
+const noopPress = () => undefined;
+
+function getSpecialFruitAssetSource(fruit?: Fruit, kind?: SpecialCellKind) {
+  if (fruit === undefined || kind === undefined) {
+    return null;
+  }
+
+  const assetId = fruitRuntimeAssetIds[fruit] ?? fruitRuntimeAssetIds[0];
+  return specialFruitRuntimeAssets[assetId]?.[getSpecialFruitAssetVariant(kind)];
+}
 
 function shiftWipeWindow(startAt: number, peakAt: number, endAt: number, offset: number) {
   const shiftedStart = Math.min(0.94, startAt + offset);
@@ -107,6 +133,10 @@ export function SpecialCellLayer({
   gap,
   boardPadding,
   fruitImageScale,
+  mergeTargetDropMotion,
+  mergeTargetDropTiming,
+  mergeTargetDropProgress,
+  mergeTargetDropTotalDurationMs = 0,
   onMergeComplete,
   onWipeComplete,
 }: SpecialCellLayerProps) {
@@ -118,15 +148,27 @@ export function SpecialCellLayer({
   const onWipeCompleteRef = useRef(onWipeComplete);
   const specialMergeTotalDurationMs = SPECIAL_MERGE_PRE_SHRINK_MS + SPECIAL_MERGE_DURATION_MS;
   const specialMergePreShrinkEndAt = SPECIAL_MERGE_PRE_SHRINK_MS / specialMergeTotalDurationMs;
+  const specialMergeAnimationDurationMs = getSpecialMergeAnimationDurationMs({
+    mergeDurationMs: specialMergeTotalDurationMs,
+    mergeTargetDropTotalDurationMs: mergeTargetDropMotion ? mergeTargetDropTotalDurationMs : 0,
+  });
   const specialWipePreDelayMs = wipeAnimation?.preDelayMs ?? 0;
   const specialWipeTotalDurationMs = wipeAnimation?.durationMs ?? specialWipePreDelayMs + SPECIAL_WIPE_DURATION_MS;
   const specialWipeOffset = specialWipePreDelayMs / Math.max(1, specialWipeTotalDurationMs);
-  const isLineRocketWipe = wipeAnimation?.sourceTool === 'lineRocket' && wipeAnimation.kind === 'row-wipe';
+  const effectiveWipeSourceTool =
+    wipeAnimation?.sourceTool ??
+    (wipeAnimation?.kind === 'row-wipe' && wipeAnimation.rowTravelDirection ? 'lineRocket' : undefined);
+  const isLineRocketWipe = effectiveWipeSourceTool === 'lineRocket' && wipeAnimation?.kind === 'row-wipe';
   const isFruityCrossWipe = wipeAnimation?.sourceTool === 'fruityCross' && wipeAnimation.kind === 'cross-wipe';
+  const isLightningFruitsWipe =
+    wipeAnimation?.sourceTool === 'lightningFruits' &&
+    wipeAnimation.kind === 'color-clear' &&
+    !wipeAnimation.suppressLightningOverlay;
+  const isNormalSpecialWipe = !isFruityCrossWipe && !isLineRocketWipe && !isLightningFruitsWipe;
   const specialWipeLayerDepth = wipeAnimation
     ? getSpecialWipeLayerDepth({
         kind: wipeAnimation.kind,
-        sourceTool: wipeAnimation.sourceTool,
+        sourceTool: effectiveWipeSourceTool,
       })
     : null;
   const mergePlan = useMemo(
@@ -204,7 +246,7 @@ export function SpecialCellLayer({
 
     const animation = Animated.timing(mergeProgress, {
       toValue: 1,
-      duration: specialMergeTotalDurationMs,
+      duration: specialMergeAnimationDurationMs,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     });
@@ -216,7 +258,7 @@ export function SpecialCellLayer({
     });
 
     return () => animation.stop();
-  }, [mergeAnimation, mergePlan, mergeProgress, specialMergeTotalDurationMs]);
+  }, [mergeAnimation, mergePlan, mergeProgress, specialMergeAnimationDurationMs]);
 
   useLayoutEffect(() => {
     if (
@@ -248,7 +290,7 @@ export function SpecialCellLayer({
     });
 
     animation.start(({ finished }) => {
-      if (finished) {
+      if (finished && !wipeAnimation.previewOnly) {
         onWipeCompleteRef.current?.(wipeAnimation.key);
       }
     });
@@ -335,78 +377,6 @@ export function SpecialCellLayer({
     );
   };
 
-  const renderOriginDirectedWipeSegments = (
-    axisPlan: ReturnType<typeof createSpecialWipePlan> | null,
-    axisColor: string,
-  ) => {
-    if (!wipeAnimation || !axisPlan) {
-      return null;
-    }
-
-    return wipeAnimation.cells.map((cell) => {
-      if (axisPlan.axis === 'row' && cell.row !== axisPlan.originCell.row) {
-        return null;
-      }
-      if (axisPlan.axis === 'column' && cell.col !== axisPlan.originCell.col) {
-        return null;
-      }
-
-      const distance =
-        axisPlan.axis === 'row'
-          ? Math.abs(cell.col - axisPlan.originCell.col)
-          : Math.abs(cell.row - axisPlan.originCell.row);
-      const shiftedWindow = shiftWipeWindow(
-        Math.min(0.72, distance * 0.08),
-        Math.min(0.86, distance * 0.08 + 0.12),
-        Math.min(1, distance * 0.08 + 0.28),
-        specialWipeOffset,
-      );
-      const isOriginCell = cell.row === axisPlan.originCell.row && cell.col === axisPlan.originCell.col;
-
-      const opacity = wipeProgress.interpolate({
-        inputRange: [0, shiftedWindow.startAt, shiftedWindow.peakAt, shiftedWindow.endAt, 1],
-        outputRange: [0, 0, isOriginCell ? 0.95 : 0.82, 0, 0],
-        extrapolate: 'clamp',
-      });
-
-      const scalePrimary = wipeProgress.interpolate({
-        inputRange: [0, shiftedWindow.startAt, shiftedWindow.peakAt, shiftedWindow.endAt],
-        outputRange: [0.25, 0.25, 1, 1.06],
-        extrapolate: 'clamp',
-      });
-
-      const scaleSecondary = wipeProgress.interpolate({
-        inputRange: [0, shiftedWindow.startAt, shiftedWindow.peakAt, shiftedWindow.endAt],
-        outputRange: [0.92, 0.92, 1, 0.96],
-        extrapolate: 'clamp',
-      });
-
-      return (
-        <Animated.View
-          key={`${wipeAnimation.key}-segment-${cell.row}-${cell.col}`}
-          style={{
-            position: 'absolute',
-            top:
-              cell.row * (tileSize + gap) +
-              (axisPlan.axis === 'row' ? tileSize / 2 - 5 : 0),
-            left:
-              cell.col * (tileSize + gap) +
-              (axisPlan.axis === 'row' ? 0 : tileSize / 2 - 5),
-            width: axisPlan.axis === 'row' ? tileSize : 10,
-            height: axisPlan.axis === 'row' ? 10 : tileSize,
-            borderRadius: 999,
-            backgroundColor: axisColor,
-            opacity,
-            transform:
-              axisPlan.axis === 'row'
-                ? [{ scaleX: scalePrimary }, { scaleY: scaleSecondary }]
-                : [{ scaleY: scalePrimary }, { scaleX: scaleSecondary }],
-          }}
-        />
-      );
-    });
-  };
-
   const renderColorClearBursts = () => {
     if (!wipeAnimation || wipeAnimation.kind !== 'color-clear') {
       return null;
@@ -451,6 +421,354 @@ export function SpecialCellLayer({
         />
       );
     });
+  };
+
+  const renderNormalSpecialWipeCellClears = () => {
+    if (!wipeAnimation || !isNormalSpecialWipe) {
+      return null;
+    }
+
+    return wipeAnimation.cells.map((cell, cellIndex) => {
+      const source = wipeAnimation.board[cell.row]?.[cell.col];
+      if (!source) {
+        return null;
+      }
+
+      const fruit = getCellFruit(source);
+      const assetId = fruitRuntimeAssetIds[fruit] ?? fruitRuntimeAssetIds[0];
+      const specialClearCellAsset = isSpecialCell(source)
+        ? getSpecialFruitAssetSource(source.fruit, source.kind)
+        : null;
+      const plan = createMatchSplashParticlePlan({
+        key: wipeAnimation.key,
+        row: cell.row,
+        col: cell.col,
+        fruit,
+      });
+      const cellDelayMs = getSpecialWipeDelayMs(cell, wipeAnimation.origin);
+      const totalDuration = Math.max(1, specialWipeTotalDurationMs);
+      const shrinkStartAt = Math.min(
+        0.98,
+        Math.max(0, (specialWipePreDelayMs + cellDelayMs) / totalDuration),
+      );
+      const shrinkEndAt = Math.min(
+        0.995,
+        Math.max(0, (specialWipePreDelayMs + cellDelayMs + SPECIAL_WIPE_PRE_SHRINK_MS) / totalDuration),
+      );
+      const cloudStartAt = shrinkEndAt;
+      const cloudPeakAt = Math.min(0.99, cloudStartAt + FRUITY_CROSS_CLOUD_PEAK_MS / totalDuration);
+      const cloudEndAt = Math.min(1, cloudStartAt + FRUITY_CROSS_CLOUD_FADE_MS / totalDuration);
+      const flashPeakAt = Math.min(0.99, cloudStartAt + FRUITY_CROSS_FLASH_PEAK_MS / totalDuration);
+      const flashEndAt = Math.min(1, cloudStartAt + FRUITY_CROSS_FLASH_FADE_MS / totalDuration);
+      const fruitImageSize = Math.round(tileSize * fruitImageScale);
+      const mysteryCloudSize = Math.round(tileSize * 1.45);
+      const coreFlashSize = Math.round(tileSize * 1.02);
+      const sparkleBaseSize = Math.max(12, Math.round(tileSize * 0.2));
+      const center = tileSize / 2;
+      const fruitScale = wipeProgress.interpolate({
+        inputRange: [0, Math.max(0.001, shrinkStartAt), Math.max(shrinkStartAt + 0.001, shrinkEndAt), 1],
+        outputRange: [1, 1, 0.15, 0.15],
+        extrapolate: 'clamp',
+      });
+      const fruitOpacity = wipeProgress.interpolate({
+        inputRange: [0, Math.max(0.001, shrinkStartAt), Math.max(shrinkStartAt + 0.001, shrinkEndAt), 1],
+        outputRange: [1, 1, 0, 0],
+        extrapolate: 'clamp',
+      });
+      const mysteryCloudScale = wipeProgress.interpolate({
+        inputRange: [0, cloudStartAt, cloudPeakAt, cloudEndAt, 1],
+        outputRange: [0.5, 0.5, plan.mysteryCloud.scale, 0.98, 0.98],
+        extrapolate: 'clamp',
+      });
+      const mysteryCloudOpacity = wipeProgress.interpolate({
+        inputRange: [0, cloudStartAt, cloudPeakAt, cloudEndAt, 1],
+        outputRange: [0, 0, plan.mysteryCloud.opacity, 0.16, 0],
+        extrapolate: 'clamp',
+      });
+      const coreFlashScale = wipeProgress.interpolate({
+        inputRange: [0, cloudStartAt, flashPeakAt, flashEndAt, 1],
+        outputRange: [0.28, 0.28, plan.coreFlash.scale, 0.82, 0.82],
+        extrapolate: 'clamp',
+      });
+      const coreFlashOpacity = wipeProgress.interpolate({
+        inputRange: [0, cloudStartAt, flashPeakAt, flashEndAt, 1],
+        outputRange: [0, 0, plan.coreFlash.opacity, 0.08, 0],
+        extrapolate: 'clamp',
+      });
+
+      return (
+        <View
+          key={`${wipeAnimation.key}-normal-special-clear-${cell.row}-${cell.col}-${cellIndex}`}
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: cell.row * (tileSize + gap),
+            left: cell.col * (tileSize + gap),
+            width: tileSize,
+            height: tileSize,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Animated.Image
+            source={specialClearCellAsset ?? fruitRuntimeAssets[assetId]}
+            resizeMode="contain"
+            style={{
+              position: 'absolute',
+              width: fruitImageSize,
+              height: fruitImageSize,
+              opacity: fruitOpacity,
+              transform: [{ scaleX: fruitScale }, { scaleY: fruitScale }],
+            }}
+          />
+          <Animated.Image
+            source={vfxRuntimeAssets.mysteryCloud}
+            resizeMode="contain"
+            tintColor={plan.mysteryCloud.tintColor}
+            style={{
+              position: 'absolute',
+              width: mysteryCloudSize,
+              height: mysteryCloudSize,
+              opacity: mysteryCloudOpacity,
+              transform: [{ rotate: plan.mysteryCloud.rotate }, { scale: mysteryCloudScale }],
+            }}
+          />
+          <Animated.Image
+            source={vfxRuntimeAssets.splashSparkle}
+            resizeMode="contain"
+            tintColor="#fff8ff"
+            style={{
+              position: 'absolute',
+              width: coreFlashSize,
+              height: coreFlashSize,
+              opacity: coreFlashOpacity,
+              transform: [{ rotate: plan.coreFlash.rotate }, { scale: coreFlashScale }],
+            }}
+          />
+          {plan.sparkles.slice(0, 4).map((sparkle, sparkleIndex) => {
+            const sparkleSize = Math.round(sparkleBaseSize * sparkle.size);
+            const { startAt, peakAt, endAt } = createSafeFruityCrossSparkleWindow(
+              cloudStartAt + (FRUITY_CROSS_SPARKLE_START_MS + sparkle.delayMs) / totalDuration,
+              FRUITY_CROSS_SPARKLE_DURATION_MS / totalDuration,
+            );
+            const translateX = wipeProgress.interpolate({
+              inputRange: [0, startAt, endAt, 1],
+              outputRange: [0, 0, sparkle.driftX * tileSize, sparkle.driftX * tileSize],
+              extrapolate: 'clamp',
+            });
+            const translateY = wipeProgress.interpolate({
+              inputRange: [0, startAt, endAt, 1],
+              outputRange: [0, 0, sparkle.driftY * tileSize, sparkle.driftY * tileSize],
+              extrapolate: 'clamp',
+            });
+            const opacity = wipeProgress.interpolate({
+              inputRange: [0, startAt, peakAt, endAt, 1],
+              outputRange: [0, 0, sparkle.opacity, 0, 0],
+              extrapolate: 'clamp',
+            });
+            const scale = wipeProgress.interpolate({
+              inputRange: [0, startAt, peakAt, endAt],
+              outputRange: [0.35, 0.35, 1.1, 0.48],
+              extrapolate: 'clamp',
+            });
+
+            return (
+              <Animated.Image
+                key={`normal-special-sparkle-${sparkleIndex}`}
+                source={vfxRuntimeAssets.splashSparkle}
+                resizeMode="contain"
+                tintColor={sparkleIndex === 0 ? '#ffffff' : '#fff2b8'}
+                style={{
+                  position: 'absolute',
+                  top: center - sparkleSize / 2 + sparkle.startY * tileSize,
+                  left: center - sparkleSize / 2 + sparkle.startX * tileSize,
+                  width: sparkleSize,
+                  height: sparkleSize,
+                  opacity,
+                  transform: [{ translateX }, { translateY }, { scale }],
+                }}
+              />
+            );
+          })}
+        </View>
+      );
+    });
+  };
+
+  const renderLightningFruitsOverlay = () => {
+    if (!wipeAnimation || !isLightningFruitsWipe) {
+      return null;
+    }
+
+    const rowCount = wipeAnimation.board.length;
+    const columnCount = wipeAnimation.board[0]?.length ?? 0;
+    const boardPixelWidth = columnCount > 0 ? columnCount * tileSize + (columnCount - 1) * gap : 0;
+    const boardPixelHeight = rowCount > 0 ? rowCount * tileSize + (rowCount - 1) * gap : 0;
+    const strikeWidth = Math.round(tileSize * 1.45);
+    const strikeHeight = Math.round(tileSize * 2.9);
+    const strikeBottomInset = strikeHeight * LIGHTNING_STRIKE_BOTTOM_ALPHA_INSET;
+    const groundSize = Math.round(tileSize * 1.35);
+    const matchingCells = wipeAnimation.cells.filter((cell) => wipeAnimation.board[cell.row]?.[cell.col]);
+    const overlayOpacity = wipeProgress.interpolate({
+      inputRange: [0, LIGHTNING_STRIKE_START_AT, LIGHTNING_STRIKE_HOLD_END_AT, 1],
+      outputRange: [0, 0.5, 0.5, 0],
+      extrapolate: 'clamp',
+    });
+    const highlightOpacity = wipeProgress.interpolate({
+      inputRange: [0, LIGHTNING_STRIKE_START_AT, LIGHTNING_STRIKE_FADE_END_AT, 1],
+      outputRange: [0, 1, 1, 0],
+      extrapolate: 'clamp',
+    });
+    const strikeOpacity = wipeProgress.interpolate({
+      inputRange: [
+        0,
+        LIGHTNING_STRIKE_START_AT,
+        LIGHTNING_STRIKE_START_AT + 0.02,
+        LIGHTNING_STRIKE_HOLD_END_AT,
+        LIGHTNING_STRIKE_FADE_END_AT,
+        1,
+      ],
+      outputRange: [0, 0, 1, 1, 0, 0],
+      extrapolate: 'clamp',
+    });
+    const strikeTranslateY = wipeProgress.interpolate({
+      inputRange: [0, LIGHTNING_STRIKE_START_AT, LIGHTNING_STRIKE_CONTACT_AT, 1],
+      outputRange: [-tileSize * 1.15, -tileSize * 1.15, 0, 0],
+      extrapolate: 'clamp',
+    });
+    const groundOpacity = wipeProgress.interpolate({
+      inputRange: [
+        0,
+        LIGHTNING_STRIKE_CONTACT_AT,
+        LIGHTNING_STRIKE_CONTACT_AT + 0.04,
+        LIGHTNING_STRIKE_HOLD_END_AT,
+        LIGHTNING_STRIKE_FADE_END_AT,
+        1,
+      ],
+      outputRange: [0, 0, 1, 0.92, 0, 0],
+      extrapolate: 'clamp',
+    });
+    const groundScale = wipeProgress.interpolate({
+      inputRange: [0, LIGHTNING_STRIKE_CONTACT_AT, LIGHTNING_STRIKE_CONTACT_AT + 0.12, LIGHTNING_STRIKE_FADE_END_AT],
+      outputRange: [0.08, 0.08, 1, 1.08],
+      extrapolate: 'clamp',
+    });
+
+    return (
+      <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: boardPixelWidth, height: boardPixelHeight }}>
+        <Animated.View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: boardPixelWidth,
+            height: boardPixelHeight,
+            backgroundColor: '#000',
+            opacity: overlayOpacity,
+          }}
+        />
+        {matchingCells.map((cell) => {
+          const source = wipeAnimation.board[cell.row]?.[cell.col];
+          if (!source) {
+            return null;
+          }
+
+          const fruit = getCellFruit(source);
+          const lightningSpecial = isSpecialCell(source)
+            ? { kind: source.kind, powerTier: source.powerTier }
+            : null;
+          const cellTop = cell.row * (tileSize + gap);
+          const cellLeft = cell.col * (tileSize + gap);
+          const shakeDistance = Math.max(4, Math.round(tileSize * 0.095));
+          const shakeTranslateX = wipeProgress.interpolate({
+            inputRange: [
+              0,
+              LIGHTNING_STRIKE_CONTACT_AT,
+              LIGHTNING_STRIKE_CONTACT_AT + 0.025,
+              LIGHTNING_STRIKE_CONTACT_AT + 0.05,
+              LIGHTNING_STRIKE_CONTACT_AT + 0.075,
+              LIGHTNING_STRIKE_CONTACT_AT + 0.11,
+              LIGHTNING_STRIKE_CONTACT_AT + 0.16,
+              LIGHTNING_STRIKE_HOLD_END_AT,
+              1,
+            ],
+            outputRange: [0, 0, -shakeDistance, shakeDistance, -shakeDistance * 0.85, shakeDistance * 0.55, -shakeDistance * 0.28, 0, 0],
+            extrapolate: 'clamp',
+          });
+          const shakeTranslateY = wipeProgress.interpolate({
+            inputRange: [
+              0,
+              LIGHTNING_STRIKE_CONTACT_AT,
+              LIGHTNING_STRIKE_CONTACT_AT + 0.025,
+              LIGHTNING_STRIKE_CONTACT_AT + 0.055,
+              LIGHTNING_STRIKE_CONTACT_AT + 0.09,
+              LIGHTNING_STRIKE_CONTACT_AT + 0.14,
+              LIGHTNING_STRIKE_HOLD_END_AT,
+              1,
+            ],
+            outputRange: [0, 0, shakeDistance * 0.65, -shakeDistance * 0.55, shakeDistance * 0.4, -shakeDistance * 0.22, 0, 0],
+            extrapolate: 'clamp',
+          });
+          const shakeScale = wipeProgress.interpolate({
+            inputRange: [0, LIGHTNING_STRIKE_CONTACT_AT, LIGHTNING_STRIKE_CONTACT_AT + 0.08, LIGHTNING_STRIKE_HOLD_END_AT, 1],
+            outputRange: [1, 1, 1.09, 1, 1],
+            extrapolate: 'clamp',
+          });
+
+          return (
+            <View key={`${wipeAnimation.key}-lightning-${cell.row}-${cell.col}`} pointerEvents="none">
+              <Animated.View
+                style={{
+                  position: 'absolute',
+                  top: cellTop,
+                  left: cellLeft,
+                  width: tileSize,
+                  height: tileSize,
+                  opacity: highlightOpacity,
+                  transform: [{ translateX: shakeTranslateX }, { translateY: shakeTranslateY }, { scale: shakeScale }],
+                }}
+              >
+                <FruitTile
+                  fruit={fruit}
+                  size={tileSize}
+                  imageScale={fruitImageScale}
+                  selected={false}
+                  special={lightningSpecial}
+                  onPress={noopPress}
+                  disabled
+                />
+              </Animated.View>
+              <Animated.Image
+                source={uiRuntimeAssets.gameplayLightningComeDown}
+                resizeMode="stretch"
+                style={{
+                  position: 'absolute',
+                  top: cellTop + tileSize / 2 - strikeHeight + strikeBottomInset,
+                  left: cellLeft + tileSize / 2 - strikeWidth / 2,
+                  width: strikeWidth,
+                  height: strikeHeight,
+                  opacity: strikeOpacity,
+                  transform: [{ translateY: strikeTranslateY }],
+                }}
+              />
+              <Animated.Image
+                source={uiRuntimeAssets.gameplayGroundLightning}
+                resizeMode="contain"
+                style={{
+                  position: 'absolute',
+                  top: cellTop + tileSize / 2 - groundSize / 2,
+                  left: cellLeft + tileSize / 2 - groundSize / 2,
+                  width: groundSize,
+                  height: groundSize,
+                  opacity: groundOpacity,
+                  transform: [{ scale: groundScale }],
+                }}
+              />
+            </View>
+          );
+        })}
+      </View>
+    );
   };
 
   const renderFruityCross = () => {
@@ -506,6 +824,9 @@ export function SpecialCellLayer({
 
         const fruit = getCellFruit(source);
         const assetId = fruitRuntimeAssetIds[fruit] ?? fruitRuntimeAssetIds[0];
+        const specialClearCellAsset = isSpecialCell(source)
+          ? getSpecialFruitAssetSource(source.fruit, source.kind)
+          : null;
         const plan = createMatchSplashParticlePlan({
           key: wipeAnimation.key,
           row: cell.row,
@@ -573,7 +894,7 @@ export function SpecialCellLayer({
             }}
           >
             <Animated.Image
-              source={fruitRuntimeAssets[assetId]}
+              source={specialClearCellAsset ?? fruitRuntimeAssets[assetId]}
               resizeMode="contain"
               style={{
                 position: 'absolute',
@@ -794,16 +1115,19 @@ export function SpecialCellLayer({
   };
 
   const renderLineRocket = () => {
-    if (!wipeAnimation || !isLineRocketWipe || !wipeAnimation.rowTravelDirection) {
+    if (!wipeAnimation || !isLineRocketWipe) {
       return null;
     }
 
-    const direction = wipeAnimation.rowTravelDirection;
     const columnCount = wipeAnimation.board[0]?.length ?? 0;
     if (columnCount <= 0) {
       return null;
     }
 
+    const lastColumn = Math.max(0, columnCount - 1);
+    const direction =
+      wipeAnimation.rowTravelDirection ??
+      (wipeAnimation.origin.col <= lastColumn - wipeAnimation.origin.col ? 'left-to-right' : 'right-to-left');
     const boardPixelWidth = columnCount * tileSize + (columnCount - 1) * gap;
     const maxDelayMs = wipeAnimation.cells.reduce(
       (maxDelay, cell) => Math.max(maxDelay, getLineRocketCellDelayMs(cell, columnCount, direction)),
@@ -851,6 +1175,7 @@ export function SpecialCellLayer({
 
     return (
       <Animated.View
+        key={`${wipeAnimation.key}-line-rocket-${direction}`}
         style={{
           position: 'absolute',
           top: wipeAnimation.origin.row * (tileSize + gap) + tileSize / 2 - rocketSize / 2,
@@ -862,6 +1187,7 @@ export function SpecialCellLayer({
         }}
       >
         <Animated.Image
+          key={`${wipeAnimation.key}-line-rocket-thrust-big-${direction}`}
           source={uiRuntimeAssets.gameplayLineRocketThrustBig}
           resizeMode="contain"
           style={{
@@ -875,6 +1201,7 @@ export function SpecialCellLayer({
           }}
         />
         <Animated.Image
+          key={`${wipeAnimation.key}-line-rocket-thrust-small-${direction}`}
           source={uiRuntimeAssets.gameplayLineRocketThrustSmall}
           resizeMode="contain"
           style={{
@@ -888,6 +1215,7 @@ export function SpecialCellLayer({
           }}
         />
         <Animated.Image
+          key={`${wipeAnimation.key}-line-rocket-image-${direction}`}
           source={uiRuntimeAssets.gameplayLineRocketImage}
           resizeMode="contain"
           style={{
@@ -902,6 +1230,29 @@ export function SpecialCellLayer({
       </Animated.View>
     );
   };
+
+  const specialTargetAsset = getSpecialFruitAssetSource(
+    mergeAnimation?.special.fruit,
+    mergeAnimation?.special.kind,
+  );
+  const mergeTargetDropTranslateY =
+    mergeTargetDropMotion && mergeTargetDropTiming && mergeTargetDropProgress && mergeTargetDropTotalDurationMs > 0
+      ? mergeTargetDropProgress.interpolate({
+          inputRange: [
+            0,
+            mergeTargetDropTiming.startMs / mergeTargetDropTotalDurationMs,
+            mergeTargetDropTiming.endMs / mergeTargetDropTotalDurationMs,
+            1,
+          ],
+          outputRange: [
+            0,
+            0,
+            (mergeTargetDropMotion.to.row - mergeTargetDropMotion.from.row) * (tileSize + gap),
+            (mergeTargetDropMotion.to.row - mergeTargetDropMotion.from.row) * (tileSize + gap),
+          ],
+          extrapolate: 'clamp',
+        })
+      : null;
 
   return (
     <>
@@ -975,7 +1326,7 @@ export function SpecialCellLayer({
                         }
                       : null
                   }
-                  onPress={() => undefined}
+                  onPress={noopPress}
                 />
               </Animated.View>
             );
@@ -992,6 +1343,7 @@ export function SpecialCellLayer({
                 outputRange: [0, 0, 0.24, 1, 0.94],
               }),
               transform: [
+                ...(mergeTargetDropTranslateY ? [{ translateY: mergeTargetDropTranslateY }] : []),
                 {
                   scale: mergeProgress.interpolate({
                     inputRange: [0, specialMergePreShrinkEndAt, 0.6, 0.86, 1],
@@ -1023,7 +1375,15 @@ export function SpecialCellLayer({
                   }),
                 }}
               />
-              {renderSpecialMarker(mergeAnimation.special, tileSize)}
+              {specialTargetAsset ? (
+                <FruitTileImage
+                  source={specialTargetAsset}
+                  uri=""
+                  size={Math.round(tileSize * fruitImageScale)}
+                />
+              ) : (
+                renderSpecialMarker(mergeAnimation.special, tileSize)
+              )}
             </View>
           </Animated.View>
         </View>
@@ -1041,7 +1401,7 @@ export function SpecialCellLayer({
             elevation: specialWipeLayerDepth?.elevation ?? 17,
           }}
         >
-          {wipeAnimation.kind !== 'cross-wipe' && !isLineRocketWipe
+          {isNormalSpecialWipe
             ? wipeAnimation.cells.map((cell) => {
                 const pulseWindow = shiftWipeWindow(0.18, 0.34, 0.62, specialWipeOffset);
                 const pulseOpacity = wipeProgress.interpolate({
@@ -1053,6 +1413,8 @@ export function SpecialCellLayer({
                     ? 'rgba(223,245,255,0.5)'
                     : wipeAnimation.kind === 'color-clear'
                       ? 'rgba(246,216,255,0.5)'
+                      : wipeAnimation.kind === 'cross-wipe'
+                        ? 'rgba(255,248,180,0.5)'
                       : 'rgba(255,242,191,0.55)';
 
                 return (
@@ -1072,47 +1434,11 @@ export function SpecialCellLayer({
                 );
               })
             : null}
-          {wipeAnimation.kind !== 'cross-wipe' && !isLineRocketWipe
-            ? renderOriginDirectedWipeSegments(rowWipePlan, '#fff0aa')
-            : null}
-          {wipeAnimation.kind !== 'cross-wipe' && !isLineRocketWipe
-            ? renderOriginDirectedWipeSegments(columnWipePlan, '#dff7ff')
-            : null}
           {renderColorClearBursts()}
+          {renderNormalSpecialWipeCellClears()}
           {renderFruityCross()}
           {renderLineRocket()}
-          {wipeAnimation.kind !== 'cross-wipe' && !isLineRocketWipe ? (
-            <Animated.View
-              style={{
-                position: 'absolute',
-                top: wipeAnimation.origin.row * (tileSize + gap),
-                left: wipeAnimation.origin.col * (tileSize + gap),
-                width: tileSize,
-                height: tileSize,
-                borderRadius: tileSize / 2,
-                borderWidth: Math.max(2, Math.round(tileSize * 0.06)),
-                borderColor:
-                  wipeAnimation.kind === 'column-wipe'
-                    ? '#dff7ff'
-                    : wipeAnimation.kind === 'color-clear'
-                      ? '#f6d8ff'
-                      : '#fff0aa',
-                backgroundColor: 'transparent',
-                opacity: wipeProgress.interpolate({
-                  inputRange: [0, specialWipeOffset + 0.12, 1],
-                  outputRange: [0, 1, 0],
-                }),
-                transform: [
-                  {
-                    scale: wipeProgress.interpolate({
-                      inputRange: [0, specialWipeOffset + 0.24, 1],
-                      outputRange: [0.76, 1.1, 1.2],
-                    }),
-                  },
-                ],
-              }}
-            />
-          ) : null}
+          {renderLightningFruitsOverlay()}
         </View>
       ) : null}
     </>

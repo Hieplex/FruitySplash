@@ -23,6 +23,9 @@ const fruitSources = [
 
 const FRUIT_TRAVEL_DURATION_MS = 9000;
 const FRUIT_SCREEN_BLEED_PX = 20;
+const FRUIT_HORIZONTAL_DRIFT_PX = 34;
+const FRUIT_TOP_ENTRY_PX = 120;
+const FRUIT_BOTTOM_EXIT_PX = 140;
 
 type FruitRainProps = {
   width: number;
@@ -43,8 +46,9 @@ type FruitRainDrop = {
 export function ChapterFruitRain({ width, height }: FruitRainProps) {
   const bleedWidth = width + FRUIT_SCREEN_BLEED_PX * 2;
   const bleedHeight = height + FRUIT_SCREEN_BLEED_PX * 2;
-  const offscreenTravelX = Math.max(width * 0.34, 140);
-  const offscreenTravelY = Math.max(height * 0.24, 180);
+  const horizontalDrift = Math.max(width * 0.035, FRUIT_HORIZONTAL_DRIFT_PX);
+  const topEntry = Math.max(height * 0.08, FRUIT_TOP_ENTRY_PX);
+  const bottomExit = Math.max(height * 0.1, FRUIT_BOTTOM_EXIT_PX);
 
   function projectX(ratio: number) {
     return bleedWidth * ratio - FRUIT_SCREEN_BLEED_PX;
@@ -60,21 +64,21 @@ export function ChapterFruitRain({ width, height }: FruitRainProps) {
 
   const drops = useMemo<FruitRainDrop[]>(
     () => [
-      { source: fruitSources[12], startX: projectX(0.4), startY: projectY(-0.22), endX: projectX(0.02), endY: projectY(0.16), size: 56, delayMs: 600, rotate: '-13deg' },
-      { source: fruitSources[13], startX: projectX(0.58), startY: projectY(-0.26), endX: projectX(0.12), endY: projectY(0.2), size: 54, delayMs: 1700, rotate: '9deg' },
-      { source: fruitSources[14], startX: projectX(0.74), startY: projectY(-0.2), endX: projectX(0.22), endY: projectY(0.26), size: 50, delayMs: 2900, rotate: '-7deg' },
-      { source: fruitSources[0], startX: projectX(0.92), startY: projectY(-0.18), endX: projectX(0.54), endY: projectY(0.28), size: 58, delayMs: 0, rotate: '-12deg' },
-      { source: fruitSources[1], startX: projectX(1.02), startY: projectY(-0.08), endX: projectX(0.6), endY: projectY(0.24), size: 58, delayMs: 1400, rotate: '10deg' },
-      { source: fruitSources[2], startX: projectX(0.82), startY: projectY(-0.28), endX: projectX(0.42), endY: projectY(0.3), size: 54, delayMs: 900, rotate: '-8deg' },
-      { source: fruitSources[3], startX: projectX(1.06), startY: projectY(-0.24), endX: projectX(0.68), endY: projectY(0.22), size: 52, delayMs: 2600, rotate: '14deg' },
-      { source: fruitSources[4], startX: projectX(0.78), startY: projectY(0.02), endX: projectX(0.3), endY: projectY(0.58), size: 62, delayMs: 2200, rotate: '-16deg' },
-      { source: fruitSources[5], startX: projectX(0.98), startY: projectY(0.06), endX: projectX(0.5), endY: projectY(0.54), size: 50, delayMs: 3200, rotate: '12deg' },
-      { source: fruitSources[6], startX: projectX(0.9), startY: projectY(0.1), endX: projectX(0.38), endY: projectY(0.5), size: 56, delayMs: 1800, rotate: '-10deg' },
-      { source: fruitSources[7], startX: projectX(1.08), startY: projectY(0.14), endX: projectX(0.56), endY: projectY(0.62), size: 56, delayMs: 4200, rotate: '16deg' },
-      { source: fruitSources[8], startX: projectX(0.8), startY: projectY(0.36), endX: projectX(0.24), endY: projectY(0.92), size: 56, delayMs: 1200, rotate: '-14deg' },
-      { source: fruitSources[9], startX: projectX(0.94), startY: projectY(0.42), endX: projectX(0.34), endY: projectY(0.98), size: 58, delayMs: 3600, rotate: '8deg' },
-      { source: fruitSources[10], startX: projectX(1.04), startY: projectY(0.48), endX: projectX(0.46), endY: projectY(1.04), size: 70, delayMs: 500, rotate: '-11deg' },
-      { source: fruitSources[11], startX: projectX(0.86), startY: projectY(0.52), endX: projectX(0.18), endY: projectY(1.08), size: 52, delayMs: 2800, rotate: '10deg' },
+      { source: fruitSources[12], startX: projectX(0.18), startY: projectY(-0.28), endX: projectX(0.12), endY: projectY(1.06), size: 56, delayMs: 600, rotate: '-13deg' },
+      { source: fruitSources[13], startX: projectX(0.3), startY: projectY(-0.34), endX: projectX(0.26), endY: projectY(1.02), size: 54, delayMs: 1700, rotate: '9deg' },
+      { source: fruitSources[14], startX: projectX(0.44), startY: projectY(-0.26), endX: projectX(0.39), endY: projectY(1.08), size: 50, delayMs: 2900, rotate: '-7deg' },
+      { source: fruitSources[0], startX: projectX(0.58), startY: projectY(-0.22), endX: projectX(0.54), endY: projectY(1.04), size: 58, delayMs: 0, rotate: '-12deg' },
+      { source: fruitSources[1], startX: projectX(0.72), startY: projectY(-0.18), endX: projectX(0.69), endY: projectY(1.02), size: 58, delayMs: 1400, rotate: '10deg' },
+      { source: fruitSources[2], startX: projectX(0.84), startY: projectY(-0.3), endX: projectX(0.8), endY: projectY(1.06), size: 54, delayMs: 900, rotate: '-8deg' },
+      { source: fruitSources[3], startX: projectX(0.94), startY: projectY(-0.24), endX: projectX(0.9), endY: projectY(1.03), size: 52, delayMs: 2600, rotate: '14deg' },
+      { source: fruitSources[4], startX: projectX(0.14), startY: projectY(-0.06), endX: projectX(0.1), endY: projectY(1.14), size: 62, delayMs: 2200, rotate: '-16deg' },
+      { source: fruitSources[5], startX: projectX(0.34), startY: projectY(-0.02), endX: projectX(0.3), endY: projectY(1.12), size: 50, delayMs: 3200, rotate: '12deg' },
+      { source: fruitSources[6], startX: projectX(0.5), startY: projectY(0.04), endX: projectX(0.46), endY: projectY(1.1), size: 56, delayMs: 1800, rotate: '-10deg' },
+      { source: fruitSources[7], startX: projectX(0.66), startY: projectY(0.02), endX: projectX(0.62), endY: projectY(1.16), size: 56, delayMs: 4200, rotate: '16deg' },
+      { source: fruitSources[8], startX: projectX(0.82), startY: projectY(0.08), endX: projectX(0.78), endY: projectY(1.18), size: 56, delayMs: 1200, rotate: '-14deg' },
+      { source: fruitSources[9], startX: projectX(0.24), startY: projectY(0.18), endX: projectX(0.2), endY: projectY(1.22), size: 58, delayMs: 3600, rotate: '8deg' },
+      { source: fruitSources[10], startX: projectX(0.56), startY: projectY(0.22), endX: projectX(0.51), endY: projectY(1.2), size: 70, delayMs: 500, rotate: '-11deg' },
+      { source: fruitSources[11], startX: projectX(0.9), startY: projectY(0.28), endX: projectX(0.86), endY: projectY(1.24), size: 52, delayMs: 2800, rotate: '10deg' },
     ],
     [bleedHeight, bleedWidth],
   );
@@ -137,10 +141,10 @@ export function ChapterFruitRain({ width, height }: FruitRainProps) {
       {drops.map((drop, index) => {
         const progress = progressValuesRef.current[index];
         const travelPadding = getTravelPadding(drop.size);
-        const entryX = drop.startX + offscreenTravelX + FRUIT_SCREEN_BLEED_PX + travelPadding;
-        const entryY = drop.startY - offscreenTravelY - FRUIT_SCREEN_BLEED_PX - travelPadding;
-        const exitX = drop.endX - offscreenTravelX - FRUIT_SCREEN_BLEED_PX - travelPadding;
-        const exitY = drop.endY + offscreenTravelY + FRUIT_SCREEN_BLEED_PX + travelPadding;
+        const entryX = drop.startX + horizontalDrift;
+        const entryY = drop.startY - topEntry - FRUIT_SCREEN_BLEED_PX - travelPadding;
+        const exitX = drop.endX - horizontalDrift;
+        const exitY = drop.endY + bottomExit + FRUIT_SCREEN_BLEED_PX + travelPadding;
 
         return (
           <Animated.Image

@@ -32,4 +32,9 @@ describe('match splash particle plan', () => {
       '#ff4a4a',
     );
   });
+
+  it('can cap sparkle particles for larger matched groups', () => {
+    expect(createMatchSplashParticlePlan({ key: 12, row: 2, col: 3, fruit: 4, sparkleLimit: 4 }).sparkles).toHaveLength(4);
+    expect(createMatchSplashParticlePlan({ key: 12, row: 2, col: 3, fruit: 4, sparkleLimit: 3 }).sparkles).toHaveLength(3);
+  });
 });

@@ -74,9 +74,12 @@ describe('Fruity Splash level catalog', () => {
     const signatures = new Set<string>();
 
     for (const level of LEVELS) {
+      expect(level.moveLimit).toBeGreaterThanOrEqual(15);
+      expect(level.moveLimit).toBeLessThanOrEqual(50);
       expect(level.star1).toBeLessThan(level.star2);
       expect(level.star2).toBeLessThan(level.star3);
       expect(level.targetScore).toBeGreaterThanOrEqual(level.star2);
+      expect(level.targetScore).toBe(level.star3);
       expect(level.seed).toBeGreaterThan(0);
       expect(level.metadata.code).toBe(`FS-${String(level.id).padStart(3, '0')}`);
       expect(level.metadata.bandIndex).toBeGreaterThan(0);
@@ -85,6 +88,31 @@ describe('Fruity Splash level catalog', () => {
     }
 
     expect(signatures.size).toBe(LEVELS.length);
+  });
+
+  it('raises star score requirements by 10% for each ten-level block', () => {
+    expect(LEVELS.slice(0, 10).every((level) => level.star1 === 2750)).toBe(true);
+    expect(LEVELS.slice(0, 10).every((level) => level.star2 === 3550)).toBe(true);
+    expect(LEVELS.slice(0, 10).every((level) => level.star3 === 4550)).toBe(true);
+
+    expect(LEVELS.slice(10, 20).every((level) => level.star1 === 3050)).toBe(true);
+    expect(LEVELS.slice(10, 20).every((level) => level.star2 === 3900)).toBe(true);
+    expect(LEVELS.slice(10, 20).every((level) => level.star3 === 5000)).toBe(true);
+
+    expect(LEVELS.slice(20, 30).every((level) => level.star1 === 3350)).toBe(true);
+    expect(LEVELS.slice(20, 30).every((level) => level.star2 === 4300)).toBe(true);
+    expect(LEVELS.slice(20, 30).every((level) => level.star3 === 5500)).toBe(true);
+  });
+
+  it('uses the expected move curve across the catalog', () => {
+    expect(LEVELS.slice(0, 5).every((level) => level.moveLimit === 50)).toBe(true);
+    expect(LEVELS[5].moveLimit).toBe(49);
+    expect(LEVELS[119].moveLimit).toBeGreaterThanOrEqual(31);
+
+    const moveLimits = LEVELS.map((level) => level.moveLimit);
+    const isNonIncreasing = moveLimits.every((moveLimit, index) => index === 0 || moveLimit <= moveLimits[index - 1]);
+
+    expect(isNonIncreasing).toBe(true);
   });
 
   it('passes the standalone verification script', () => {

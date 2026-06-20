@@ -3,11 +3,21 @@ import { getCellFruit } from '@/game/board';
 import { resolveBoardMatches, type ResolveBoardMatchesResult } from '@/game/engine';
 import { clearMatchedCells, collapseBoard } from '@/game/gravity';
 import { getSpecialCellClearCells } from '@/game/special-cells';
+import { collectSpecialChainActivations, getSpecialChainDelayMs } from '@/game/special-chain';
 import {
+  getLineRocketCellDelayMs,
   getLineRocketTravelDirection,
   type DirectSpecialPowerTool,
   type LineRocketTravelDirection,
 } from '@/gameplay/direct-power-tools';
+import {
+  getFruityCrossClearDelayMs,
+  getLightningFruitsChainDelayMs,
+  getLineRocketClearDelayMs,
+  getSpecialWipeMaxDelayMs,
+  getSpecialWipeDelayMs,
+  SPECIAL_WIPE_PRE_SHRINK_MS,
+} from '@/gameplay/match-vfx-timing';
 import type { MatchSplash, MatchSplashCell } from '@/components/match-splash-overlay';
 import type {
   Board,
@@ -25,6 +35,7 @@ import type {
 
 const NORMAL_MATCH_SPLASH_DURATION_MS = 240;
 const NORMAL_MATCH_PRE_SHRINK_MS = 70;
+const BOOSTER_CLEAR_SCORE_PER_CELL = 20;
 
 export type MatchStep = {
   board: Board;
@@ -40,6 +51,13 @@ export type CascadeSequenceJob =
       board: Board;
       splash: MatchSplash;
       overlappedDrop?: OverlappedDropAnimationPayload;
+    }
+  | {
+      type: 'bomb-clear';
+      key: number;
+      board: Board;
+      target: Position;
+      cells: Position[];
     }
   | {
       type: 'drop';
@@ -59,6 +77,7 @@ export type CascadeSequenceJob =
       targetCell: Position;
       special: SpecialCell;
       companionSplash?: MatchSplash;
+      overlappedDrop?: OverlappedDropAnimationPayload;
     }
     | {
         type: 'special-wipe';
@@ -67,9 +86,13 @@ export type CascadeSequenceJob =
         origin: Position;
         kind: SpecialCellKind;
         cells: Position[];
+        triggeredBy?: Position;
+        triggerDelayMs?: number;
         targetFruit?: Fruit;
-        sourceTool?: 'lineRocket' | 'fruityCross';
+        sourceTool?: DirectSpecialPowerTool;
         rowTravelDirection?: RowClearTravelDirection;
+        chainedWipes?: SpecialWipeChain[];
+        overlappedDrop?: OverlappedDropAnimationPayload;
       }
   | {
       type: 'reshuffle';
@@ -80,6 +103,16 @@ export type CascadeSequenceJob =
 
 export type ResolvedState = EngineState & {
   reshuffle?: ResolveBoardMatchesResult['reshuffle'];
+};
+
+export type SpecialWipeChain = {
+  key: number;
+  origin: Position;
+  kind: SpecialCellKind;
+  cells: Position[];
+  triggeredBy?: Position;
+  triggerDelayMs: number;
+  targetFruit?: Fruit;
 };
 
 type DropAnimationPayload = {
@@ -147,6 +180,40 @@ function uniquePositions(cells: Position[]) {
   return [...unique.values()];
 }
 
+function positionKey(cell: Position) {
+  return `${cell.row}:${cell.col}`;
+}
+
+function isSamePosition(left: Position, right: Position) {
+  return left.row === right.row && left.col === right.col;
+}
+
+function filterLightningRootCellsForChainedSpecialWipes(
+  clearCells: Position[],
+  chainActivations: ReturnType<typeof collectSpecialChainActivations>,
+  target: Position,
+) {
+  if (chainActivations.length === 0) {
+    return clearCells;
+  }
+
+  const rootKeepCells = new Set<string>([positionKey(target)]);
+  const chainedSpecialClaimedCells = new Set<string>();
+
+  chainActivations.forEach((activation) => {
+    activation.cells.forEach((cell) => {
+      if (!isSamePosition(cell, target)) {
+        chainedSpecialClaimedCells.add(positionKey(cell));
+      }
+    });
+  });
+
+  return clearCells.filter((cell) => {
+    const key = positionKey(cell);
+    return rootKeepCells.has(key) || !chainedSpecialClaimedCells.has(key);
+  });
+}
+
 function getLineRocketRowCells(row: number, columnCount: number, direction: LineRocketTravelDirection) {
   const cells = Array.from({ length: columnCount }, (_, col) => ({ row, col }));
   return direction === 'left-to-right' ? cells : cells.reverse();
@@ -204,6 +271,10 @@ function createDropPayload(
   };
 }
 
+function getSplashPositions(splash?: MatchSplash) {
+  return splash?.cells.map(({ row, col }) => ({ row, col }));
+}
+
 export function createMatchSteps(key: number, scoreEvents: ScoreEvent[]): MatchStep[] {
   return scoreEvents.flatMap((event, index) => {
     const splash = createMatchSplash(key + index, event);
@@ -226,6 +297,7 @@ export function createCascadeSequenceJobsFromTimeline(
 ): CascadeSequenceJob[] {
   const jobs: CascadeSequenceJob[] = [];
   let pendingClearEvent: Extract<CascadeTimelineEvent, { type: 'clear' }> | null = null;
+  let currentRootSpecialWipeJob: Extract<CascadeSequenceJob, { type: 'special-wipe' }> | null = null;
 
   function flushPendingClear(overlappedDropEvent?: Extract<CascadeTimelineEvent, { type: 'drop' }>) {
     if (!pendingClearEvent) {
@@ -254,7 +326,7 @@ export function createCascadeSequenceJobsFromTimeline(
       jobs.push({
         type: 'splash',
         key: pendingClearEvent.key,
-        board: overlappedDrop?.board ?? pendingClearEvent.board,
+        board: pendingClearEvent.board,
         splash,
         overlappedDrop,
       });
@@ -267,10 +339,12 @@ export function createCascadeSequenceJobsFromTimeline(
     if (event.type === 'clear') {
       flushPendingClear();
       pendingClearEvent = event;
+      currentRootSpecialWipeJob = null;
       continue;
     }
 
     if (event.type === 'drop') {
+      currentRootSpecialWipeJob = null;
       if (pendingClearEvent) {
         flushPendingClear(event);
         continue;
@@ -288,6 +362,7 @@ export function createCascadeSequenceJobsFromTimeline(
     }
 
     if (event.type === 'special-create') {
+      currentRootSpecialWipeJob = null;
       const companionSplash = pendingClearEvent
         ? createMatchSplash(event.key, {
             chain: pendingClearEvent.chain,
@@ -306,10 +381,7 @@ export function createCascadeSequenceJobsFromTimeline(
         board: event.board,
         fruit: event.fruit,
         sourceCells: event.sourceCells,
-        hiddenCells:
-          pendingClearEvent && pendingClearEvent.clearedCells.length > 0
-            ? pendingClearEvent.clearedCells
-            : undefined,
+        hiddenCells: undefined,
         targetCell: event.targetCell,
         special: event.special,
         companionSplash: companionSplash ?? undefined,
@@ -320,21 +392,42 @@ export function createCascadeSequenceJobsFromTimeline(
 
     if (event.type === 'special-wipe') {
       flushPendingClear();
-      jobs.push({
+      if ((event.triggeredBy || event.triggerDelayMs) && currentRootSpecialWipeJob) {
+        currentRootSpecialWipeJob.chainedWipes = [
+          ...(currentRootSpecialWipeJob.chainedWipes ?? []),
+          {
+            key: event.key,
+            origin: event.origin,
+            kind: event.kind,
+            cells: event.cells,
+            triggeredBy: event.triggeredBy,
+            triggerDelayMs: event.triggerDelayMs ?? 0,
+            targetFruit: event.targetFruit,
+          },
+        ];
+        continue;
+      }
+
+      const wipeJob: Extract<CascadeSequenceJob, { type: 'special-wipe' }> = {
         type: 'special-wipe',
         key: event.key,
         board: event.board,
         origin: event.origin,
         kind: event.kind,
         cells: event.cells,
+        triggeredBy: event.triggeredBy,
+        triggerDelayMs: event.triggerDelayMs,
         targetFruit: event.targetFruit,
         sourceTool: event.sourceTool,
         rowTravelDirection: event.rowTravelDirection,
-      });
+      };
+      jobs.push(wipeJob);
+      currentRootSpecialWipeJob = wipeJob;
       continue;
     }
 
     flushPendingClear();
+    currentRootSpecialWipeJob = null;
     jobs.push({
       type: 'reshuffle',
       key: event.key,
@@ -344,6 +437,25 @@ export function createCascadeSequenceJobsFromTimeline(
   }
 
   flushPendingClear();
+
+  for (let index = 0; index < jobs.length - 1; index += 1) {
+    const job = jobs[index];
+    const nextJob = jobs[index + 1];
+    if (job.type !== 'special-merge' || nextJob.type !== 'drop' || nextJob.motions.length === 0) {
+      continue;
+    }
+
+    job.overlappedDrop = {
+      key: nextJob.key,
+      board: nextJob.board,
+      motions: nextJob.motions,
+      hiddenCells: nextJob.hiddenCells ?? getSplashPositions(job.companionSplash),
+      startDelaysByColumn:
+        nextJob.startDelaysByColumn ??
+        (job.companionSplash ? createDropStartDelaysByColumn(job.companionSplash) : undefined),
+    };
+    jobs.splice(index + 1, 1);
+  }
 
   return jobs;
 }
@@ -358,7 +470,7 @@ export function resolveBombClearSequence({
   reshuffle,
 }: ResolveBombClearSequenceOptions): BombClearSequence {
   const blastCells = getBombBlastCells(target, board);
-  const bombScore = blastCells.length * 10;
+  const bombScore = blastCells.length * BOOSTER_CLEAR_SCORE_PER_CELL;
   const clearedBoard = clearMatchedCells(board, blastCells);
   const collapsed = collapseBoard(clearedBoard, refill);
   const scoreEvents: ScoreEvent[] = [];
@@ -382,12 +494,14 @@ export function resolveBombClearSequence({
     motions: collapsed.dropMotions,
     hiddenCells: blastCells,
   };
-  const hiddenCellsByDropKey = new Map<number, Position[]>();
-  const firstDropEvent = timelineEvents.find((event): event is Extract<CascadeTimelineEvent, { type: 'drop' }> => event.type === 'drop');
-  if (firstDropEvent) {
-    hiddenCellsByDropKey.set(firstDropEvent.key, blastCells);
-  }
   const jobs = [
+    {
+      type: 'bomb-clear' as const,
+      key,
+      board,
+      target,
+      cells: blastCells,
+    },
     {
       type: 'drop' as const,
       key,
@@ -395,9 +509,7 @@ export function resolveBombClearSequence({
       motions: collapsed.dropMotions,
       hiddenCells: blastCells,
     },
-    ...createCascadeSequenceJobsFromTimeline(timelineEvents, {
-      hiddenCellsByDropKey,
-    }),
+    ...createCascadeSequenceJobsFromTimeline(timelineEvents),
   ];
 
   return {
@@ -429,14 +541,53 @@ export function resolveDirectSpecialPowerSequence({
     tool === 'lineRocket' && kind === 'row-wipe'
       ? getLineRocketTravelDirection(target, columnCount)
       : undefined;
-  const clearCells = lineRocketDirection
+  const rawClearCells = lineRocketDirection
     ? getLineRocketRowCells(target.row, columnCount, lineRocketDirection)
     : uniquePositions([
         target,
         ...getSpecialCellClearCells(target, kind, board, targetFruit),
       ]);
-  const clearedBoard = clearMatchedCells(board, clearCells);
+  const lightningChainDelayMs =
+    tool === 'lightningFruits' && kind === 'color-clear'
+      ? getLightningFruitsChainDelayMs(getSpecialWipeMaxDelayMs(rawClearCells, target), SPECIAL_WIPE_PRE_SHRINK_MS)
+      : undefined;
+  const getDirectPowerChainDelayMs = (cell: Position) => {
+    if (lineRocketDirection) {
+      return getLineRocketClearDelayMs(
+        getLineRocketCellDelayMs(cell, columnCount, lineRocketDirection),
+        SPECIAL_WIPE_PRE_SHRINK_MS,
+      );
+    }
+
+    if (tool === 'fruityCross' && kind === 'cross-wipe') {
+      return getFruityCrossClearDelayMs(getSpecialWipeDelayMs(cell, target));
+    }
+
+    if (tool === 'lightningFruits' && kind === 'color-clear') {
+      return lightningChainDelayMs ?? 0;
+    }
+
+    return getSpecialChainDelayMs(target, cell);
+  };
+  const chainActivations = collectSpecialChainActivations(
+    board,
+    rawClearCells.map((cell) => ({
+      position: cell,
+      triggeredBy: target,
+      triggerDelayMs: getDirectPowerChainDelayMs(cell),
+    })),
+  );
+  const clearCells =
+    tool === 'lightningFruits' && kind === 'color-clear'
+      ? filterLightningRootCellsForChainedSpecialWipes(rawClearCells, chainActivations, target)
+      : rawClearCells;
+  const allClearCells = uniquePositions([
+    ...clearCells,
+    ...chainActivations.flatMap((activation) => activation.cells),
+  ]);
+  const clearedBoard = clearMatchedCells(board, allClearCells);
   const collapsed = collapseBoard(clearedBoard, refill);
+  const boosterClearScore = allClearCells.length * BOOSTER_CLEAR_SCORE_PER_CELL;
   const timelineEvents: CascadeTimelineEvent[] = [
     {
       type: 'special-wipe',
@@ -447,8 +598,9 @@ export function resolveDirectSpecialPowerSequence({
       origin: target,
       kind,
       cells: clearCells,
+      triggerDelayMs: 0,
       targetFruit,
-      sourceTool: tool === 'lineRocket' || tool === 'fruityCross' ? tool : undefined,
+      sourceTool: tool,
       rowTravelDirection: lineRocketDirection,
     },
     {
@@ -465,6 +617,7 @@ export function resolveDirectSpecialPowerSequence({
     {
       ...engineState,
       board: collapsed.board,
+      score: engineState.score + boosterClearScore,
     },
     {
       refill: cascadeRefill,
@@ -474,13 +627,48 @@ export function resolveDirectSpecialPowerSequence({
       timelineKeyStart: key + 2,
     },
   );
+  const jobs = createCascadeSequenceJobsFromTimeline(timelineEvents);
+  const firstJob = jobs[0];
+  if (firstJob?.type === 'special-wipe' && chainActivations.length > 0) {
+    firstJob.chainedWipes = chainActivations.map((activation, index) => ({
+      key: key + 1000 + index,
+      origin: activation.position,
+      kind: activation.special.kind,
+      cells: activation.cells,
+      triggeredBy: activation.triggeredBy,
+      triggerDelayMs: activation.triggerDelayMs,
+      targetFruit: activation.targetFruit,
+    }));
+  }
+  const firstDropJob = jobs[1];
+  const shouldOverlapDirectPowerDrop = !(
+    firstJob?.type === 'special-wipe' &&
+    firstJob.sourceTool === 'lightningFruits' &&
+    chainActivations.length > 0
+  );
+  if (
+    firstJob?.type === 'special-wipe' &&
+    firstJob.sourceTool !== 'fruityCross' &&
+    shouldOverlapDirectPowerDrop &&
+    firstDropJob?.type === 'drop' &&
+    firstDropJob.motions.length > 0
+  ) {
+    firstJob.overlappedDrop = {
+      key: firstDropJob.key,
+      board: firstDropJob.board,
+      motions: firstDropJob.motions,
+      hiddenCells: firstJob.sourceTool === 'lightningFruits' ? clearCells : allClearCells,
+      startDelaysByColumn: firstDropJob.startDelaysByColumn,
+    };
+    jobs.splice(1, 1);
+  }
 
   return {
     clearCells,
     clearedBoard,
     clearedDropMotions: collapsed.dropMotions,
     settledBoard: collapsed.board,
-    jobs: createCascadeSequenceJobsFromTimeline(timelineEvents),
+    jobs,
     state,
     targetFruit,
   };
@@ -516,7 +704,7 @@ export function resolveHammerClearSequence({
   reshuffle,
 }: ResolveHammerClearSequenceOptions): HammerClearSequence {
   const blastCells = [target];
-  const hammerScore = 10;
+  const hammerScore = blastCells.length * BOOSTER_CLEAR_SCORE_PER_CELL;
   const clearedBoard = clearMatchedCells(board, blastCells);
   const collapsed = collapseBoard(clearedBoard, refill);
   const scoreEvents: ScoreEvent[] = [];

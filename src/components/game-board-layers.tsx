@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Animated, View } from 'react-native';
 import { FruitTile } from '@/components/fruit-tile';
 import { getCellFruit } from '@/game/board';
@@ -9,6 +10,7 @@ type DropLayerProps = {
   dropProgress: Animated.Value;
   dropMotionTimings: DropMotionTiming[];
   dropTotalDurationMs: number;
+  hiddenMotionIndices?: ReadonlySet<number>;
   tileSize: number;
   gap: number;
   boardPadding: number;
@@ -24,11 +26,14 @@ type ReshuffleLayerProps = {
   fruitImageScale: number;
 };
 
-export function DropLayer({
+const noopPress = () => undefined;
+
+export const DropLayer = memo(function DropLayer({
   dropAnimation,
   dropProgress,
   dropMotionTimings,
   dropTotalDurationMs,
+  hiddenMotionIndices,
   tileSize,
   gap,
   boardPadding,
@@ -55,6 +60,10 @@ export function DropLayer({
       }}
     >
       {motions.map((motion, index) => {
+        if (hiddenMotionIndices?.has(index)) {
+          return null;
+        }
+
         const distance = motion.to.row - motion.from.row;
         const timing = dropMotionTimings[index] ?? {
           startMs: 0,
@@ -90,16 +99,16 @@ export function DropLayer({
               size={tileSize}
               imageScale={fruitImageScale}
               selected={false}
-              onPress={() => undefined}
+              onPress={noopPress}
             />
           </Animated.View>
         );
       })}
     </View>
   );
-}
+});
 
-export function ReshuffleLayer({
+export const ReshuffleLayer = memo(function ReshuffleLayer({
   reshuffleAnimation,
   reshuffleProgress,
   tileSize,
@@ -144,11 +153,11 @@ export function ReshuffleLayer({
               size={tileSize}
               imageScale={fruitImageScale}
               selected={false}
-              onPress={() => undefined}
+              onPress={noopPress}
             />
           </Animated.View>
         )),
       )}
     </View>
   );
-}
+});

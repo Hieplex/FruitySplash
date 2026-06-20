@@ -20,15 +20,25 @@ type ScreenWipeContextValue = {
 };
 
 const READY_FALLBACK_MS = 1800;
+const OPEN_FALLBACK_MS = 900;
 
 const ScreenWipeContext = createContext<ScreenWipeContextValue | null>(null);
 
 export function ScreenWipeProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [phase, setPhase] = useState<ScreenWipePhase>('hidden');
+  const phaseRef = useRef<ScreenWipePhase>('hidden');
   const pendingActionRef = useRef<(() => void) | null>(null);
   const awaitingReadyRef = useRef(false);
+  const readyRequestedRef = useRef(false);
+  const routeActionStartedRef = useRef(false);
   const readyFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openFallbackRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const setWipePhase = useCallback((nextPhase: ScreenWipePhase) => {
+    phaseRef.current = nextPhase;
+    setPhase(nextPhase);
+  }, []);
 
   const clearReadyFallback = useCallback(() => {
     if (readyFallbackRef.current) {
@@ -37,67 +47,124 @@ export function ScreenWipeProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const clearOpenFallback = useCallback(() => {
+    if (openFallbackRef.current) {
+      clearTimeout(openFallbackRef.current);
+      openFallbackRef.current = null;
+    }
+  }, []);
+
+  const startOpening = useCallback(() => {
+    clearOpenFallback();
+    setWipePhase('opening');
+    openFallbackRef.current = setTimeout(() => {
+      setWipePhase('hidden');
+    }, OPEN_FALLBACK_MS);
+  }, [clearOpenFallback, setWipePhase]);
+
   const startReadyFallback = useCallback(() => {
     clearReadyFallback();
+    clearOpenFallback();
     readyFallbackRef.current = setTimeout(() => {
       awaitingReadyRef.current = false;
-      setPhase('opening');
+      readyRequestedRef.current = false;
+      routeActionStartedRef.current = false;
+      startOpening();
     }, READY_FALLBACK_MS);
-  }, [clearReadyFallback]);
+  }, [clearOpenFallback, clearReadyFallback, startOpening]);
 
   const setScreenReady = useCallback(() => {
-    if (!awaitingReadyRef.current) {
+    if (!awaitingReadyRef.current || !routeActionStartedRef.current) {
       return;
     }
 
-    awaitingReadyRef.current = false;
-    clearReadyFallback();
-    setPhase((current) => (current === 'closed' ? 'opening' : current));
-  }, [clearReadyFallback]);
+    if (phaseRef.current === 'closed') {
+      awaitingReadyRef.current = false;
+      readyRequestedRef.current = false;
+      clearReadyFallback();
+      startOpening();
+      return;
+    }
+
+    readyRequestedRef.current = true;
+  }, [clearReadyFallback, startOpening]);
 
   const beginNavigation = useCallback(
     (action: () => void) => {
-      if (phase !== 'hidden') {
+      const currentPhase = phaseRef.current;
+
+      if (currentPhase === 'opening') {
         return;
       }
 
       pendingActionRef.current = action;
       awaitingReadyRef.current = true;
+      readyRequestedRef.current = false;
+      routeActionStartedRef.current = false;
+      clearOpenFallback();
+
+      if (currentPhase === 'closing') {
+        return;
+      }
+
       clearReadyFallback();
-      setPhase('closing');
+
+      if (currentPhase === 'closed') {
+        startReadyFallback();
+        const pendingAction = pendingActionRef.current;
+        pendingActionRef.current = null;
+
+        if (pendingAction) {
+          routeActionStartedRef.current = true;
+          startTransition(() => {
+            pendingAction();
+          });
+        }
+        return;
+      }
+
+      setWipePhase('closing');
     },
-    [clearReadyFallback, phase],
+    [clearOpenFallback, clearReadyFallback, setWipePhase, startReadyFallback],
   );
 
   const push = useCallback((href: Href) => beginNavigation(() => router.push(href)), [beginNavigation, router]);
   const replace = useCallback((href: Href) => beginNavigation(() => router.replace(href)), [beginNavigation, router]);
 
   const handleClosed = useCallback(() => {
-    setPhase('closed');
+    setWipePhase('closed');
     const action = pendingActionRef.current;
     pendingActionRef.current = null;
+    readyRequestedRef.current = false;
     startReadyFallback();
+
     if (action) {
+      routeActionStartedRef.current = true;
       startTransition(() => {
         action();
       });
     }
-  }, [startReadyFallback]);
+  }, [setWipePhase, startReadyFallback]);
 
   const handleOpened = useCallback(() => {
-    setPhase('hidden');
-  }, []);
+    clearOpenFallback();
+    routeActionStartedRef.current = false;
+    setWipePhase('hidden');
+  }, [clearOpenFallback, setWipePhase]);
 
-  useEffect(() => () => clearReadyFallback(), [clearReadyFallback]);
+  useEffect(() => () => {
+    clearReadyFallback();
+    clearOpenFallback();
+  }, [clearOpenFallback, clearReadyFallback]);
 
   const value = useMemo<ScreenWipeContextValue>(
     () => ({
       push,
       replace,
       setScreenReady,
-      isTransitioning: phase !== 'hidden',
+      isTransitioning: phaseRef.current !== 'hidden',
     }),
-    [phase, push, replace, setScreenReady],
+    [push, replace, setScreenReady],
   );
 
   return (

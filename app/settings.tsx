@@ -40,7 +40,7 @@ export default function SettingsScreen() {
         <Switch value={progress.soundEnabled} onValueChange={progress.setSoundEnabled} />
       </View>
 
-      <AnimatedButton label="Back to menu" kind="secondary" onPress={() => screenWipe.replace('/chapters')} />
+      <AnimatedButton label="Back to menu" kind="secondary" onPress={() => screenWipe.replace('/map')} />
     </View>
   );
 }

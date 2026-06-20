@@ -72,6 +72,16 @@ export function createSpecialMergePlan({
   };
 }
 
+export function getSpecialMergeAnimationDurationMs({
+  mergeDurationMs,
+  mergeTargetDropTotalDurationMs = 0,
+}: {
+  mergeDurationMs: number;
+  mergeTargetDropTotalDurationMs?: number;
+}) {
+  return Math.max(mergeDurationMs, mergeTargetDropTotalDurationMs);
+}
+
 export function createFruityCrossSplitWindow({
   splitStartAt,
   splitEndAt,

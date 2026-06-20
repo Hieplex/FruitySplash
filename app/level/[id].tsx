@@ -1,13 +1,14 @@
 import { useLocalSearchParams } from 'expo-router';
 import { useAudioPlayer } from 'expo-audio';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, ImageBackground, Modal, Pressable, Text, View, unstable_batchedUpdates, useWindowDimensions } from 'react-native';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, Image, ImageBackground, Modal, Pressable, Text, View } from 'react-native';
 import { AnimatedButton } from '@/components/animated-button';
 import type { BombDropAnimation } from '@/components/bomb-effect-cell';
 import type { HammerAnimation } from '@/components/hammer-effect-cell';
 import { GameBoard, type DropAnimation, type ReshuffleAnimation } from '@/components/game-board';
 import type { MatchSplash } from '@/components/match-splash-overlay';
 import { ScoreReelDigits } from '@/components/score-reel-digits';
+import { SettingsOverlay } from '@/components/settings-overlay';
 import type { SpecialMergeAnimation, SpecialWipeAnimation } from '@/components/special-cell-layer';
 import { resolveSwap, type ResolveSwapResult } from '@/game/engine';
 import {
@@ -20,19 +21,21 @@ import {
 import { warmGameplayAssets } from '@/game/assets/preload-assets.native';
 import { LEVELS } from '@/game/levels/levels';
 import { createSeededRefill } from '@/game/gravity';
-import { cloneBoard, cloneCell, createBoard, isAdjacent } from '@/game/board';
-import { getBombBlastCells } from '@/game/boosters/bomb';
+import { cloneBoard, cloneCell, createBoard, getCellFruit, isAdjacent } from '@/game/board';
 import { findRecommendedMove, type RecommendedMove } from '@/game/move-hints';
-import type { Board, BoardCell, CascadeTimelineEvent, EngineState, Position, RowClearTravelDirection } from '@/game/types';
+import type { Board, BoardCell, CascadeTimelineEvent, EngineState, Position, RowClearTravelDirection, SpecialWipeSourceTool } from '@/game/types';
 import { isBoardInteractionLocked } from '@/gameplay/interaction';
 import { calculateLevelLayout } from '@/gameplay/level-layout';
 import {
   FRUITY_CROSS_GROUP_DROP_MS,
+  FRUITY_CROSS_SPLIT_LAUNCH_MS,
   getLineRocketClearDelayMs,
   getFruityCrossClearDelayMs,
   getMatchSoundDelayMs,
   getSpecialWipeDelayMs,
   getSpecialWipeMaxDelayMs,
+  BOMB_DROP_DURATION_MS,
+  BOMB_IMPACT_DURATION_MS,
   SPECIAL_WIPE_PRE_SHRINK_MS,
   SPECIAL_WIPE_SPLASH_DURATION_MS,
 } from '@/gameplay/match-vfx-timing';
@@ -50,14 +53,13 @@ import {
   getLineRocketCellDelayMs,
   type DirectSpecialPowerTool,
 } from '@/gameplay/direct-power-tools';
-import { getPlayableLevelId, useProgress } from '@/state/progress-store';
+import { calculateLevelCoinReward, getPlayableLevelId, useProgress } from '@/state/progress-store';
 import { useScreenWipe } from '@/state/screen-wipe';
+import { usePlaytestViewport } from '@/platform/playtest-viewport';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
 
 const gameplaySettingsButtonImage = require('../../assets/fruity/Buttons/SettingScreen/SettingButton.png');
-const gameplaySettingsScreenImage = require('../../assets/fruity/Buttons/SettingScreen/ScreenSetting.png');
-const gameplaySettingsExitImage = require('../../assets/fruity/Buttons/SettingScreen/Exit.png');
 
 function calculateStars(score: number, star1: number, star2: number, star3: number) {
   if (score >= star3) return 3;
@@ -76,16 +78,28 @@ function createLevelState(seed: number): EngineState {
 }
 
 const TIMER_ENABLED = false;
-const MAX_MOVES = 30;
 const MOVE_HINT_IDLE_DELAY_MS = 5000;
-const DEBUG_BOMB_BUTTON_ALWAYS_ACTIVE = true;
+const DEBUG_UNLIMITED_BOOSTERS = true;
+const DEBUG_UNLIMITED_BOOSTER_COUNT = 999;
+const MIN_REAL_LIGHTNING_WIPE_MS = 260;
+const LIGHTNING_STRIKE_START_AT = 0.08;
+const MAX_SOUND_OUTPUT_GAIN = 0.5;
+const BOOSTER_COUNT_TEXT_SIZE = 20;
+const BOOSTER_COUNT_OUTLINE_OFFSET = 1.5;
+const BOOSTER_COUNT_BADGE_MIN_WIDTH = 34;
+const BOOSTER_COUNT_BADGE_HEIGHT = 24;
 
-function getSpecialWipePreShrinkMs(sourceTool?: 'lineRocket' | 'fruityCross') {
+function getSpecialWipePreShrinkMs(sourceTool?: SpecialWipeSourceTool) {
   return sourceTool === 'fruityCross' ? SPECIAL_WIPE_PRE_SHRINK_MS : SPECIAL_WIPE_PRE_SHRINK_MS;
 }
-const DEBUG_SHOW_BOARD_TOUCH_BOUNDS = true;
+const DEBUG_SHOW_BOARD_TOUCH_BOUNDS = false;
 
 type BoardToolId = 'bomb' | 'hammer' | DirectSpecialPowerTool;
+type VisibleBoardToolId = 'bomb' | DirectSpecialPowerTool;
+
+function runStateUpdates(callback: () => void) {
+  callback();
+}
 
 function isDirectSpecialPowerTool(tool: BoardToolId): tool is DirectSpecialPowerTool {
   return (DIRECT_SPECIAL_POWER_TOOL_IDS as readonly string[]).includes(tool);
@@ -97,6 +111,75 @@ function getTwoDigitMoves(moves: number) {
 
 function getScoreDigits(score: number, digitCount: number) {
   return String(Math.max(0, Math.min(99999, score))).padStart(digitCount, '0').split('').map(Number);
+}
+
+function getBoosterInventoryId(tool: VisibleBoardToolId) {
+  switch (tool) {
+    case 'bomb':
+      return 'bomb' as const;
+    case 'lineRocket':
+      return 'lineRocket' as const;
+    case 'fruityCross':
+      return 'fruityCross' as const;
+    case 'lightningFruits':
+      return 'lightningFruits' as const;
+  }
+}
+
+function BoosterCountLabel({ count }: { count: number }) {
+  const text = `x${Math.max(0, count)}`;
+
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        right: -4,
+        bottom: -2,
+        minWidth: BOOSTER_COUNT_BADGE_MIN_WIDTH,
+        height: BOOSTER_COUNT_BADGE_HEIGHT,
+        paddingHorizontal: 6,
+        borderRadius: BOOSTER_COUNT_BADGE_HEIGHT / 2,
+        backgroundColor: 'rgba(31, 12, 9, 0.92)',
+        borderWidth: 1.5,
+        borderColor: 'rgba(255, 242, 200, 0.95)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 3,
+      }}
+    >
+      {[
+        [-BOOSTER_COUNT_OUTLINE_OFFSET, 0],
+        [BOOSTER_COUNT_OUTLINE_OFFSET, 0],
+        [0, -BOOSTER_COUNT_OUTLINE_OFFSET],
+        [0, BOOSTER_COUNT_OUTLINE_OFFSET],
+      ].map(([x, y], index) => (
+        <Text
+          key={`${text}-outline-${index}`}
+          style={{
+            position: 'absolute',
+            color: '#120704',
+            fontSize: BOOSTER_COUNT_TEXT_SIZE,
+            lineHeight: BOOSTER_COUNT_TEXT_SIZE,
+            fontWeight: '900',
+            transform: [{ translateX: x }, { translateY: y }],
+          }}
+        >
+          {text}
+        </Text>
+      ))}
+      <Text
+        style={{
+          color: '#ffffff',
+          fontSize: BOOSTER_COUNT_TEXT_SIZE,
+          lineHeight: BOOSTER_COUNT_TEXT_SIZE,
+          fontWeight: '900',
+        }}
+      >
+        {text}
+      </Text>
+    </View>
+  );
 }
 
 type PendingSwapState = {
@@ -132,7 +215,7 @@ function createCellSplashFromBoard(
   cells: Position[],
   origin?: Position,
   options: {
-    sourceTool?: 'lineRocket' | 'fruityCross';
+    sourceTool?: SpecialWipeSourceTool;
     rowTravelDirection?: RowClearTravelDirection;
   } = {},
 ): MatchSplash {
@@ -172,10 +255,26 @@ function createCellSplashFromBoard(
   };
 }
 
+function createDropStartDelaysByColumnFromSplash(splash?: MatchSplash | null) {
+  if (!splash) {
+    return undefined;
+  }
+
+  const delaysByColumn: Record<number, number> = {};
+  const preShrinkMs = splash.preShrinkMs ?? 0;
+
+  for (const cell of splash.cells) {
+    const delayMs = (cell.delayMs ?? 0) + preShrinkMs;
+    delaysByColumn[cell.col] = Math.max(delaysByColumn[cell.col] ?? 0, delayMs);
+  }
+
+  return delaysByColumn;
+}
+
 export default function LevelScreen() {
   const screenWipe = useScreenWipe();
   const { id } = useLocalSearchParams<{ id?: string }>();
-  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = usePlaytestViewport();
   const requestedLevelId = Number(id ?? 1);
   const progress = useProgress();
   const levelIds = useMemo(() => LEVELS.map((entry) => entry.id), []);
@@ -188,7 +287,27 @@ export default function LevelScreen() {
   const matchSoundPlayer = useAudioPlayer(soundRuntimeAssets.matchEffect, {
     keepAudioSessionActive: true,
   });
+  const lightningEffectPlayer = useAudioPlayer(soundRuntimeAssets.lightningEffect, {
+    keepAudioSessionActive: true,
+  });
+  const bombEffectPlayer = useAudioPlayer(soundRuntimeAssets.bombEffect, {
+    keepAudioSessionActive: true,
+  });
+  const lineRocketEffectPlayer = useAudioPlayer(soundRuntimeAssets.lineRocketEffect, {
+    keepAudioSessionActive: true,
+  });
+  const fruityCrossEffectPlayer = useAudioPlayer(soundRuntimeAssets.fruityCrossEffect, {
+    keepAudioSessionActive: true,
+  });
+  const gameplayMusicPlayer = useAudioPlayer(soundRuntimeAssets.gameplayBackgroundMusic, {
+    keepAudioSessionActive: true,
+  });
+  const soundOutputGain = (progress.soundVolumePercent / 100) * MAX_SOUND_OUTPUT_GAIN;
   const matchSoundTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lightningEffectSoundTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bombEffectSoundTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lineRocketEffectSoundTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fruityCrossEffectSoundTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const directPowerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const directPowerStartTimes = useRef(new Map<number, number>());
   const completedLevelRef = useRef<number | null>(null);
@@ -205,9 +324,6 @@ export default function LevelScreen() {
   const [specialWipeAnimation, setSpecialWipeAnimation] = useState<SpecialWipeAnimation | null>(null);
   const [selectedBoardTool, setSelectedBoardTool] = useState<BoardToolId | null>(null);
   const [bombDropAnimation, setBombDropAnimation] = useState<BombDropAnimation | null>(null);
-  const [pendingBombClear, setPendingBombClear] = useState<{ key: number; target: Position; board: Board } | null>(
-    null,
-  );
   const [hammerAnimation, setHammerAnimation] = useState<HammerAnimation | null>(null);
   const [pendingHammerClear, setPendingHammerClear] = useState<{ key: number; target: Position; board: Board } | null>(
     null,
@@ -219,23 +335,29 @@ export default function LevelScreen() {
     completedPrimary: boolean;
     completedOverlappedDrop: boolean;
   } | null>(null);
+  const activeTimelineRef = useRef<ActiveTimelineState | null>(null);
   const [showBoosterRow, setShowBoosterRow] = useState(false);
   const [showSettingsOverlay, setShowSettingsOverlay] = useState(false);
-  const settingsExitScale = useRef(new Animated.Value(1)).current;
-  const settingsHomeScale = useRef(new Animated.Value(1)).current;
-  const settingsMapScale = useRef(new Animated.Value(1)).current;
+  const lightningScreenShake = useRef(new Animated.Value(0)).current;
+  const lightningScreenShakeAnimation = useRef<Animated.CompositeAnimation | null>(null);
   const levelLayout = calculateLevelLayout({
     screenWidth,
     screenHeight,
     rows: level.rows,
     cols: level.cols,
   });
-  const { boosters, grid, hud, settingsButton, settingsOverlay } = levelLayout;
-  const canUseBombBooster = DEBUG_BOMB_BUTTON_ALWAYS_ACTIVE || progress.inventory.boosters.bomb > 0;
-  const canUseHammerBooster = DEBUG_BOMB_BUTTON_ALWAYS_ACTIVE || progress.inventory.boosters.hammer > 0;
-  const moveDigits = getTwoDigitMoves(MAX_MOVES - engineState.movesUsed);
+  const { boosters, grid, hud, settingsButton } = levelLayout;
+  const canUseBombBooster = DEBUG_UNLIMITED_BOOSTERS || progress.inventory.boosters.bomb > 0;
+  const canUseHammerBooster = DEBUG_UNLIMITED_BOOSTERS || progress.inventory.boosters.hammer > 0;
+  const canUseLineRocketBooster = DEBUG_UNLIMITED_BOOSTERS || progress.inventory.boosters.lineRocket > 0;
+  const canUseFruityCrossBooster = DEBUG_UNLIMITED_BOOSTERS || progress.inventory.boosters.fruityCross > 0;
+  const canUseLightningFruitsBooster =
+    DEBUG_UNLIMITED_BOOSTERS || progress.inventory.boosters.lightningFruits > 0;
+  const remainingMoves = Math.max(0, level.moveLimit - engineState.movesUsed);
+  const moveDigits = getTwoDigitMoves(remainingMoves);
   const scoreDigits = getScoreDigits(engineState.score, hud.scoreValue.digits);
-  const scoreProgress = Math.max(0, Math.min(1, engineState.score / level.targetScore));
+  const finishTargetScore = level.targetScore;
+  const scoreProgress = Math.max(0, Math.min(1, engineState.score / finishTargetScore));
   const progressFillWidth =
     scoreProgress <= 0
       ? hud.progressFill.minWidth
@@ -255,7 +377,6 @@ export default function LevelScreen() {
       Boolean(activeTimeline) ||
       Boolean(reshuffleAnimation) ||
       Boolean(bombDropAnimation) ||
-      Boolean(pendingBombClear) ||
       Boolean(hammerAnimation) ||
       Boolean(pendingHammerClear),
   });
@@ -269,6 +390,42 @@ export default function LevelScreen() {
     matchSoundTimer.current = null;
   }
 
+  function clearPendingLightningEffectSound() {
+    if (lightningEffectSoundTimer.current === null) {
+      return;
+    }
+
+    clearTimeout(lightningEffectSoundTimer.current);
+    lightningEffectSoundTimer.current = null;
+  }
+
+  function clearPendingBombEffectSound() {
+    if (bombEffectSoundTimer.current === null) {
+      return;
+    }
+
+    clearTimeout(bombEffectSoundTimer.current);
+    bombEffectSoundTimer.current = null;
+  }
+
+  function clearPendingLineRocketEffectSound() {
+    if (lineRocketEffectSoundTimer.current === null) {
+      return;
+    }
+
+    clearTimeout(lineRocketEffectSoundTimer.current);
+    lineRocketEffectSoundTimer.current = null;
+  }
+
+  function clearPendingFruityCrossEffectSound() {
+    if (fruityCrossEffectSoundTimer.current === null) {
+      return;
+    }
+
+    clearTimeout(fruityCrossEffectSoundTimer.current);
+    fruityCrossEffectSoundTimer.current = null;
+  }
+
   function clearPendingDirectPower() {
     if (directPowerTimer.current === null) {
       return;
@@ -276,6 +433,43 @@ export default function LevelScreen() {
 
     clearTimeout(directPowerTimer.current);
     directPowerTimer.current = null;
+    directPowerStartTimes.current.clear();
+  }
+
+  function playLightningScreenShake(delayMs = 0) {
+    if (!progress.shakingEnabled) {
+      stopLightningScreenShake();
+      return;
+    }
+
+    lightningScreenShakeAnimation.current?.stop();
+    lightningScreenShake.setValue(0);
+    const shakeAnimation = Animated.timing(lightningScreenShake, {
+      toValue: 1,
+      duration: 360,
+      easing: Easing.linear,
+      useNativeDriver: true,
+    });
+    const animation =
+      delayMs > 0
+        ? Animated.sequence([Animated.delay(delayMs), shakeAnimation])
+        : shakeAnimation;
+
+    lightningScreenShakeAnimation.current = animation;
+    animation.start(({ finished }) => {
+      if (finished) {
+        lightningScreenShake.setValue(0);
+      }
+      if (lightningScreenShakeAnimation.current === animation) {
+        lightningScreenShakeAnimation.current = null;
+      }
+    });
+  }
+
+  function stopLightningScreenShake() {
+    lightningScreenShakeAnimation.current?.stop();
+    lightningScreenShakeAnimation.current = null;
+    lightningScreenShake.setValue(0);
   }
 
   function playMatchSound(delayMs = 0) {
@@ -298,22 +492,84 @@ export default function LevelScreen() {
     matchSoundTimer.current = setTimeout(play, delayMs);
   }
 
-  function animateSettingsExit(value: number) {
-    Animated.spring(settingsExitScale, {
-      toValue: value,
-      useNativeDriver: true,
-      speed: 24,
-      bounciness: 6,
-    }).start();
+  function playLightningEffectSound(delayMs = 0) {
+    clearPendingLightningEffectSound();
+
+    if (!progress.soundEnabled) {
+      return;
+    }
+
+    const play = () => {
+      lightningEffectSoundTimer.current = null;
+      void lightningEffectPlayer.seekTo(0).finally(() => lightningEffectPlayer.play());
+    };
+
+    if (delayMs <= 0) {
+      play();
+      return;
+    }
+
+    lightningEffectSoundTimer.current = setTimeout(play, delayMs);
   }
 
-  function animateSettingsMenu(scale: Animated.Value, value: number) {
-    Animated.spring(scale, {
-      toValue: value,
-      useNativeDriver: true,
-      speed: 24,
-      bounciness: 6,
-    }).start();
+  function playBombEffectSound(delayMs = 0) {
+    clearPendingBombEffectSound();
+
+    if (!progress.soundEnabled) {
+      return;
+    }
+
+    const play = () => {
+      bombEffectSoundTimer.current = null;
+      void bombEffectPlayer.seekTo(0).finally(() => bombEffectPlayer.play());
+    };
+
+    if (delayMs <= 0) {
+      play();
+      return;
+    }
+
+    bombEffectSoundTimer.current = setTimeout(play, delayMs);
+  }
+
+  function playLineRocketEffectSound(delayMs = 0) {
+    clearPendingLineRocketEffectSound();
+
+    if (!progress.soundEnabled) {
+      return;
+    }
+
+    const play = () => {
+      lineRocketEffectSoundTimer.current = null;
+      void lineRocketEffectPlayer.seekTo(0).finally(() => lineRocketEffectPlayer.play());
+    };
+
+    if (delayMs <= 0) {
+      play();
+      return;
+    }
+
+    lineRocketEffectSoundTimer.current = setTimeout(play, delayMs);
+  }
+
+  function playFruityCrossEffectSound(delayMs = 0) {
+    clearPendingFruityCrossEffectSound();
+
+    if (!progress.soundEnabled) {
+      return;
+    }
+
+    const play = () => {
+      fruityCrossEffectSoundTimer.current = null;
+      void fruityCrossEffectPlayer.seekTo(0).finally(() => fruityCrossEffectPlayer.play());
+    };
+
+    if (delayMs <= 0) {
+      play();
+      return;
+    }
+
+    fruityCrossEffectSoundTimer.current = setTimeout(play, delayMs);
   }
 
   useEffect(() => {
@@ -325,13 +581,45 @@ export default function LevelScreen() {
   }, [levelId, progress.hydrated, requestedLevelId, screenWipe]);
 
   useEffect(() => {
+    matchSoundPlayer.volume = soundOutputGain;
+    lightningEffectPlayer.volume = soundOutputGain;
+    bombEffectPlayer.volume = soundOutputGain;
+    lineRocketEffectPlayer.volume = soundOutputGain;
+    fruityCrossEffectPlayer.volume = soundOutputGain;
+    gameplayMusicPlayer.volume = soundOutputGain;
+  }, [
+    bombEffectPlayer,
+    fruityCrossEffectPlayer,
+    gameplayMusicPlayer,
+    lightningEffectPlayer,
+    lineRocketEffectPlayer,
+    matchSoundPlayer,
+    soundOutputGain,
+  ]);
+
+  useEffect(() => {
+    gameplayMusicPlayer.loop = true;
+
+    if (progress.soundEnabled && !paused) {
+      gameplayMusicPlayer.play();
+    } else {
+      gameplayMusicPlayer.pause();
+    }
+  }, [gameplayMusicPlayer, paused, progress.soundEnabled]);
+
+  useEffect(() => {
     void warmGameplayAssets();
     const timer = setTimeout(() => setShowBoosterRow(true), 140);
 
     return () => {
       clearTimeout(timer);
       clearPendingMatchSound();
+      clearPendingLightningEffectSound();
+      clearPendingBombEffectSound();
+      clearPendingLineRocketEffectSound();
+      clearPendingFruityCrossEffectSound();
       clearPendingDirectPower();
+      stopLightningScreenShake();
     };
   }, []);
 
@@ -346,7 +634,12 @@ export default function LevelScreen() {
   useEffect(() => {
     completedLevelRef.current = null;
     clearPendingMatchSound();
+    clearPendingLightningEffectSound();
+    clearPendingBombEffectSound();
+    clearPendingLineRocketEffectSound();
+    clearPendingFruityCrossEffectSound();
     clearPendingDirectPower();
+    stopLightningScreenShake();
     directPowerStartTimes.current.clear();
     setEngineState(createLevelState(level.seed));
     setSelected(null);
@@ -361,12 +654,12 @@ export default function LevelScreen() {
     setSpecialWipeAnimation(null);
     setSelectedBoardTool(null);
     setBombDropAnimation(null);
-    setPendingBombClear(null);
     setHammerAnimation(null);
     setPendingHammerClear(null);
     setRecommendedMove(null);
     setActiveTimeline(null);
     activeTimelineCompletion.current = null;
+    activeTimelineRef.current = null;
     setShowBoosterRow(false);
     setShowSettingsOverlay(false);
 
@@ -401,7 +694,8 @@ export default function LevelScreen() {
 
   function commitResolvedState(state: ResolvedState) {
     activeTimelineCompletion.current = null;
-    unstable_batchedUpdates(() => {
+    activeTimelineRef.current = null;
+    runStateUpdates(() => {
       setMatchSplash(null);
       setDropAnimation(null);
       setReshuffleAnimation(null);
@@ -411,6 +705,7 @@ export default function LevelScreen() {
       setActiveTimeline(null);
       setMatchDisplayBoard(null);
     });
+    stopLightningScreenShake();
   }
 
   function getOverlappedDrop(job?: CascadeSequenceJob) {
@@ -429,8 +724,9 @@ export default function LevelScreen() {
   function applyTimelineJob(job: CascadeSequenceJob) {
     if (job.type === 'splash') {
       const overlappedDrop = job.overlappedDrop;
-      unstable_batchedUpdates(() => {
-        setMatchDisplayBoard(overlappedDrop?.board ?? job.board);
+      runStateUpdates(() => {
+        setBombDropAnimation(null);
+        setMatchDisplayBoard(job.board);
         setDropAnimation(
           overlappedDrop
             ? {
@@ -451,7 +747,8 @@ export default function LevelScreen() {
     }
 
     if (job.type === 'drop') {
-      unstable_batchedUpdates(() => {
+      runStateUpdates(() => {
+        setBombDropAnimation(null);
         setMatchSplash(null);
         setReshuffleAnimation(null);
         setSpecialMergeAnimation(null);
@@ -468,8 +765,21 @@ export default function LevelScreen() {
     }
 
     if (job.type === 'special-merge') {
-      unstable_batchedUpdates(() => {
-        setDropAnimation(null);
+      const overlappedDrop = getOverlappedDrop(job);
+      const overlappedDropStartDelaysByColumn =
+        overlappedDrop?.startDelaysByColumn ?? createDropStartDelaysByColumnFromSplash(job.companionSplash);
+      runStateUpdates(() => {
+        setBombDropAnimation(null);
+        setDropAnimation(
+          overlappedDrop
+            ? {
+                key: overlappedDrop.key,
+                motions: overlappedDrop.motions,
+                hiddenCells: overlappedDrop.hiddenCells,
+                startDelaysByColumn: overlappedDropStartDelaysByColumn,
+              }
+            : null,
+        );
         setReshuffleAnimation(null);
         setSpecialWipeAnimation(null);
         setMatchDisplayBoard(job.board);
@@ -484,12 +794,16 @@ export default function LevelScreen() {
           special: job.special,
         });
       });
+      playMatchSound(getMatchSoundDelayMs(job.companionSplash));
       return;
     }
 
     if (job.type === 'special-wipe') {
+      const overlappedDrop = getOverlappedDrop(job);
       const columnCount = job.board[0]?.length ?? 0;
       const lineRocketDirection = job.sourceTool === 'lineRocket' ? job.rowTravelDirection : undefined;
+      const isLightningFruitsWipe = job.sourceTool === 'lightningFruits';
+      const lightningPreviewStarted = isLightningFruitsWipe && directPowerStartTimes.current.has(job.key);
       const maxDelayMs =
         lineRocketDirection
           ? job.cells.reduce(
@@ -507,6 +821,33 @@ export default function LevelScreen() {
             ? getFruityCrossClearDelayMs(getSpecialWipeMaxDelayMs(job.cells, job.origin))
             : getSpecialWipeMaxDelayMs(job.cells, job.origin);
       const preDelayMs = getSpecialWipePreShrinkMs(job.sourceTool);
+      const primaryDurationMs =
+        job.sourceTool === 'fruityCross'
+          ? Math.max(1, maxDelayMs - FRUITY_CROSS_GROUP_DROP_MS) + preDelayMs + SPECIAL_WIPE_SPLASH_DURATION_MS
+          : maxDelayMs + preDelayMs + SPECIAL_WIPE_SPLASH_DURATION_MS;
+      const chainedDurationMs =
+        job.chainedWipes?.reduce(
+          (maxDuration, chain) => {
+            const chainMaxDelayMs = getSpecialWipeMaxDelayMs(chain.cells, chain.origin);
+
+            return Math.max(
+              maxDuration,
+              chain.triggerDelayMs +
+                getSpecialWipePreShrinkMs(undefined) +
+                chainMaxDelayMs +
+                SPECIAL_WIPE_SPLASH_DURATION_MS,
+            );
+          },
+          0,
+        ) ?? 0;
+      const durationMs = Math.max(primaryDurationMs, chainedDurationMs);
+      const initialElapsedMs =
+        lightningPreviewStarted
+          ? Math.min(
+              Math.max(0, Date.now() - (directPowerStartTimes.current.get(job.key) ?? Date.now())),
+              Math.max(0, durationMs - MIN_REAL_LIGHTNING_WIPE_MS),
+            )
+          : undefined;
       const splash =
         job.sourceTool === 'fruityCross'
           ? null
@@ -514,8 +855,20 @@ export default function LevelScreen() {
               sourceTool: job.sourceTool,
               rowTravelDirection: job.rowTravelDirection,
             });
-      unstable_batchedUpdates(() => {
-        setDropAnimation(null);
+      const overlappedDropStartDelaysByColumn =
+        overlappedDrop?.startDelaysByColumn ?? createDropStartDelaysByColumnFromSplash(splash);
+      runStateUpdates(() => {
+        setBombDropAnimation(null);
+        setDropAnimation(
+          overlappedDrop
+            ? {
+                key: overlappedDrop.key,
+                motions: overlappedDrop.motions,
+                hiddenCells: overlappedDrop.hiddenCells,
+                startDelaysByColumn: overlappedDropStartDelaysByColumn,
+              }
+            : null,
+        );
         setReshuffleAnimation(null);
         setSpecialMergeAnimation(null);
         setMatchDisplayBoard(job.board);
@@ -526,23 +879,49 @@ export default function LevelScreen() {
           origin: job.origin,
           kind: job.kind,
           cells: job.cells,
+          chainedWipes: job.chainedWipes,
           targetFruit: job.targetFruit,
           sourceTool: job.sourceTool,
           rowTravelDirection: job.rowTravelDirection,
           preDelayMs,
-          durationMs:
-            job.sourceTool === 'fruityCross'
-              ? Math.max(1, maxDelayMs - FRUITY_CROSS_GROUP_DROP_MS) + preDelayMs + SPECIAL_WIPE_SPLASH_DURATION_MS
-              : maxDelayMs + preDelayMs + SPECIAL_WIPE_SPLASH_DURATION_MS,
+          durationMs,
           groupDropCompleted: job.sourceTool === 'fruityCross',
+          initialElapsedMs,
+          suppressLightningOverlay: isLightningFruitsWipe,
         });
       });
+      if (job.sourceTool === 'lineRocket') {
+        playLineRocketEffectSound();
+      }
+      if (job.sourceTool === 'fruityCross') {
+        playFruityCrossEffectSound(FRUITY_CROSS_SPLIT_LAUNCH_MS);
+      }
       playMatchSound(getMatchSoundDelayMs(splash));
       return;
     }
 
+    if (job.type === 'bomb-clear') {
+      runStateUpdates(() => {
+        setMatchSplash(null);
+        setReshuffleAnimation(null);
+        setSpecialMergeAnimation(null);
+        setSpecialWipeAnimation(null);
+        setMatchDisplayBoard(job.board);
+        setBombDropAnimation({
+          key: job.key,
+          target: job.target,
+          blastCells: job.cells,
+        });
+        setDropAnimation(null);
+      });
+      playBombEffectSound(BOMB_DROP_DURATION_MS + BOMB_IMPACT_DURATION_MS);
+      playMatchSound();
+      return;
+    }
+
     if (job.type === 'reshuffle') {
-      unstable_batchedUpdates(() => {
+      runStateUpdates(() => {
+        setBombDropAnimation(null);
         setMatchSplash(null);
         setDropAnimation(null);
         setSpecialMergeAnimation(null);
@@ -565,6 +944,7 @@ export default function LevelScreen() {
           job.type === 'drop' ||
           job.type === 'special-merge' ||
           job.type === 'special-wipe' ||
+          job.type === 'bomb-clear' ||
           job.type === 'reshuffle')
       ) {
         return index;
@@ -587,13 +967,15 @@ export default function LevelScreen() {
       completedPrimary: false,
       completedOverlappedDrop: !hasOverlappedDrop(jobs[firstJobIndex]),
     };
-    setActiveTimeline({
+    const timelineState = {
       activeJobIndex: firstJobIndex,
       jobs,
       state,
       completedPrimary: false,
       completedOverlappedDrop: !hasOverlappedDrop(jobs[firstJobIndex]),
-    });
+    };
+    activeTimelineRef.current = timelineState;
+    setActiveTimeline(timelineState);
   }
 
   function advanceToNextTimelineJob(timeline: ActiveTimelineState) {
@@ -605,6 +987,7 @@ export default function LevelScreen() {
 
     if (!nextJob) {
       activeTimelineCompletion.current = null;
+      activeTimelineRef.current = null;
       commitResolvedState(timeline.state);
       return true;
     }
@@ -615,40 +998,43 @@ export default function LevelScreen() {
       completedPrimary: false,
       completedOverlappedDrop: !hasOverlappedDrop(nextJob),
     };
-    setActiveTimeline({
+    const timelineState = {
       activeJobIndex: nextJobIndex,
       jobs: timeline.jobs,
       state: timeline.state,
       completedPrimary: false,
       completedOverlappedDrop: !hasOverlappedDrop(nextJob),
-    });
+    };
+    activeTimelineRef.current = timelineState;
+    setActiveTimeline(timelineState);
     return true;
   }
 
   function advanceTimeline(jobType: CascadeSequenceJob['type'], key: number) {
-    if (!activeTimeline) {
+    const timeline = activeTimeline ?? activeTimelineRef.current;
+    if (!timeline) {
       return false;
     }
 
-    const activeJob = activeTimeline.jobs[activeTimeline.activeJobIndex];
+    const activeJob = timeline.jobs[timeline.activeJobIndex];
     if (!activeJob || activeJob.type !== jobType || activeJob.key !== key) {
       return false;
     }
 
     const completion = activeTimelineCompletion.current;
     const completedOverlappedDrop =
-      completion && completion.activeJobIndex === activeTimeline.activeJobIndex
+      completion && completion.activeJobIndex === timeline.activeJobIndex
         ? completion.completedOverlappedDrop
-        : activeTimeline.completedOverlappedDrop;
+        : timeline.completedOverlappedDrop;
 
     if (hasOverlappedDrop(activeJob) && !completedOverlappedDrop) {
       activeTimelineCompletion.current = {
-        activeJobIndex: activeTimeline.activeJobIndex,
+        activeJobIndex: timeline.activeJobIndex,
         completedPrimary: true,
         completedOverlappedDrop,
       };
       setActiveTimeline((current) =>
-        current && current.activeJobIndex === activeTimeline.activeJobIndex
+        current && current.activeJobIndex === timeline.activeJobIndex
           ? {
               ...current,
               completedPrimary: true,
@@ -658,15 +1044,16 @@ export default function LevelScreen() {
       return true;
     }
 
-    return advanceToNextTimelineJob(activeTimeline);
+    return advanceToNextTimelineJob(timeline);
   }
 
   function completeOverlappedDrop(key: number) {
-    if (!activeTimeline) {
+    const timeline = activeTimeline ?? activeTimelineRef.current;
+    if (!timeline) {
       return false;
     }
 
-    const activeJob = activeTimeline.jobs[activeTimeline.activeJobIndex];
+    const activeJob = timeline.jobs[timeline.activeJobIndex];
     const overlappedDrop = getOverlappedDrop(activeJob);
     if (!overlappedDrop || overlappedDrop.key !== key) {
       return false;
@@ -674,21 +1061,21 @@ export default function LevelScreen() {
 
     const completion = activeTimelineCompletion.current;
     const completedPrimary =
-      completion && completion.activeJobIndex === activeTimeline.activeJobIndex
+      completion && completion.activeJobIndex === timeline.activeJobIndex
         ? completion.completedPrimary
-        : activeTimeline.completedPrimary;
+        : timeline.completedPrimary;
 
     if (completedPrimary) {
-      return advanceToNextTimelineJob(activeTimeline);
+      return advanceToNextTimelineJob(timeline);
     }
 
     activeTimelineCompletion.current = {
-      activeJobIndex: activeTimeline.activeJobIndex,
+      activeJobIndex: timeline.activeJobIndex,
       completedPrimary,
       completedOverlappedDrop: true,
     };
     setActiveTimeline((current) =>
-      current && current.activeJobIndex === activeTimeline.activeJobIndex
+      current && current.activeJobIndex === timeline.activeJobIndex
         ? {
             ...current,
             completedOverlappedDrop: true,
@@ -698,42 +1085,87 @@ export default function LevelScreen() {
     return true;
   }
 
+  function saveEarnedStars(score: number, stars: number) {
+    if (stars <= 0) {
+      return 0;
+    }
+
+    const coinReward = calculateLevelCoinReward(progress, level.id, stars);
+    void progress.completeLevel(level.id, score, stars);
+    return coinReward;
+  }
+
   useEffect(() => {
     const stars = calculateStars(engineState.score, level.star1, level.star2, level.star3);
-    if (engineState.score >= level.targetScore) {
+    if (engineState.score >= finishTargetScore) {
       if (completedLevelRef.current === level.id) {
         return;
       }
 
       completedLevelRef.current = level.id;
-      progress.completeLevel(level.id, engineState.score, stars);
+      const coinReward = saveEarnedStars(engineState.score, stars);
       screenWipe.replace({
         pathname: '/results',
         params: {
           levelId: String(level.id),
           score: String(engineState.score),
           stars: String(stars),
+          coinReward: String(coinReward),
           won: '1',
         },
       });
     }
-  }, [engineState.score, level, progress, screenWipe]);
+  }, [engineState.score, finishTargetScore, level, progress, screenWipe]);
 
   useEffect(() => {
-    if (!TIMER_ENABLED) return;
-    if (timeLeft > 0) return;
+    if (engineState.score >= finishTargetScore) return;
+    if (engineState.movesUsed < level.moveLimit) return;
+    if (completedLevelRef.current === level.id) return;
 
     const stars = calculateStars(engineState.score, level.star1, level.star2, level.star3);
+
+    completedLevelRef.current = level.id;
+    const coinReward = saveEarnedStars(engineState.score, stars);
     screenWipe.replace({
       pathname: '/results',
       params: {
         levelId: String(level.id),
         score: String(engineState.score),
         stars: String(stars),
-        won: '0',
+        coinReward: String(coinReward),
+        won: stars > 0 ? '1' : '0',
       },
     });
-  }, [engineState.score, level, screenWipe, timeLeft]);
+  }, [
+    engineState.movesUsed,
+    engineState.score,
+    finishTargetScore,
+    level.id,
+    level.moveLimit,
+    level.star1,
+    level.star2,
+    level.star3,
+    progress,
+    screenWipe,
+  ]);
+
+  useEffect(() => {
+    if (!TIMER_ENABLED) return;
+    if (timeLeft > 0) return;
+
+    const stars = calculateStars(engineState.score, level.star1, level.star2, level.star3);
+    const coinReward = saveEarnedStars(engineState.score, stars);
+    screenWipe.replace({
+      pathname: '/results',
+      params: {
+        levelId: String(level.id),
+        score: String(engineState.score),
+        stars: String(stars),
+        coinReward: String(coinReward),
+        won: stars > 0 ? '1' : '0',
+      },
+    });
+  }, [engineState.score, finishTargetScore, level, progress, screenWipe, timeLeft]);
 
   function beginSwap(from: Position, to: Position) {
     const timelineEvents: CascadeTimelineEvent[] = [];
@@ -763,12 +1195,22 @@ export default function LevelScreen() {
     setSelected(null);
   }
 
-  function activateDirectSpecialPower(tool: DirectSpecialPowerTool, target: Position) {
+  async function activateDirectSpecialPower(tool: DirectSpecialPowerTool, target: Position) {
+    if (!DEBUG_UNLIMITED_BOOSTERS) {
+      const consumed = await progress.consumeBooster(getBoosterInventoryId(tool));
+
+      if (!consumed) {
+        setSelectedBoardTool(null);
+        setSelected(null);
+        return;
+      }
+    }
+
     const key = Date.now();
     const boardSnapshot = engineState.board;
     const stateSnapshot = engineState;
     clearPendingDirectPower();
-    unstable_batchedUpdates(() => {
+    runStateUpdates(() => {
       setSelectedBoardTool(null);
       setSelected(null);
       setRecommendedMove(null);
@@ -778,6 +1220,7 @@ export default function LevelScreen() {
       setSpecialWipeAnimation(null);
       setActiveTimeline(null);
       activeTimelineCompletion.current = null;
+      activeTimelineRef.current = null;
     });
 
     if (tool === 'fruityCross') {
@@ -792,6 +1235,32 @@ export default function LevelScreen() {
         durationMs: FRUITY_CROSS_GROUP_DROP_MS,
         previewOnly: true,
       });
+    }
+    if (tool === 'lightningFruits') {
+      const targetCell = boardSnapshot[target.row]?.[target.col];
+      if (targetCell) {
+        const targetFruit = getCellFruit(targetCell);
+        const lightningCells = boardSnapshot.flatMap((row, rowIndex) =>
+          row.flatMap((cell, colIndex) => (getCellFruit(cell) === targetFruit ? [{ row: rowIndex, col: colIndex }] : [])),
+        );
+        const preDelayMs = getSpecialWipePreShrinkMs('lightningFruits');
+        const previewDurationMs = getSpecialWipeMaxDelayMs(lightningCells, target) + preDelayMs + SPECIAL_WIPE_SPLASH_DURATION_MS;
+        directPowerStartTimes.current.set(key, Date.now());
+        playLightningScreenShake(Math.round(previewDurationMs * LIGHTNING_STRIKE_START_AT));
+        playLightningEffectSound(Math.round(previewDurationMs * LIGHTNING_STRIKE_START_AT));
+        setSpecialWipeAnimation({
+          key: key - 1,
+          board: boardSnapshot,
+          origin: target,
+          kind: 'color-clear',
+          cells: lightningCells,
+          targetFruit,
+          sourceTool: 'lightningFruits',
+          preDelayMs,
+          durationMs: previewDurationMs,
+          previewOnly: true,
+        });
+      }
     }
 
     directPowerTimer.current = setTimeout(() => {
@@ -811,10 +1280,10 @@ export default function LevelScreen() {
       });
 
       startTimeline(sequence.jobs, sequence.state);
-    }, tool === 'fruityCross' ? FRUITY_CROSS_GROUP_DROP_MS : 0);
+    }, tool === 'fruityCross' ? FRUITY_CROSS_GROUP_DROP_MS : tool === 'lightningFruits' ? 16 : 0);
   }
 
-  function handleSelect(position: Position) {
+  async function handleSelect(position: Position) {
     if (boardInteractionLocked) {
       return;
     }
@@ -828,12 +1297,38 @@ export default function LevelScreen() {
       }
 
       const key = Date.now();
-      const blastCells = getBombBlastCells(position, engineState.board);
-      if (!DEBUG_BOMB_BUTTON_ALWAYS_ACTIVE) {
-        progress.consumeBooster('bomb');
+      const boardSnapshot = engineState.board;
+      const stateSnapshot = engineState;
+      if (!DEBUG_UNLIMITED_BOOSTERS) {
+        const consumed = await progress.consumeBooster('bomb');
+        if (!consumed) {
+          setSelectedBoardTool(null);
+          setSelected(null);
+          return;
+        }
       }
-      setBombDropAnimation({ key, target: position, blastCells });
-      setPendingBombClear({ key, target: position, board: engineState.board });
+      const refillSeed = level.seed + stateSnapshot.movesUsed * 101 + position.row * 17 + position.col * 31;
+      const cascadeRefillSeed =
+        level.seed + stateSnapshot.movesUsed * 101 + position.row * 19 + position.col * 37 + 256;
+      const sequence = resolveBombClearSequence({
+        key,
+        target: position,
+        board: boardSnapshot,
+        engineState: stateSnapshot,
+        refill: createSeededRefill({ seed: refillSeed, fruitTypes: level.fruitTypes }),
+        cascadeRefill: createSeededRefill({ seed: cascadeRefillSeed, fruitTypes: level.fruitTypes }),
+        reshuffle: (board: Board) => createBoard({ seed: level.seed + stateSnapshot.movesUsed + 299 }),
+      });
+      runStateUpdates(() => {
+        setDropAnimation(null);
+        setReshuffleAnimation(null);
+        setSpecialMergeAnimation(null);
+        setSpecialWipeAnimation(null);
+        setActiveTimeline(null);
+        activeTimelineCompletion.current = null;
+        activeTimelineRef.current = null;
+      });
+      startTimeline(sequence.jobs, sequence.state);
       setSelectedBoardTool(null);
       setSelected(null);
       return;
@@ -846,8 +1341,13 @@ export default function LevelScreen() {
         return;
       }
 
-      if (!DEBUG_BOMB_BUTTON_ALWAYS_ACTIVE) {
-        progress.consumeBooster('hammer');
+      if (!DEBUG_UNLIMITED_BOOSTERS) {
+        const consumed = await progress.consumeBooster('hammer');
+        if (!consumed) {
+          setSelectedBoardTool(null);
+          setSelected(null);
+          return;
+        }
       }
       setEngineState((current) => {
         const board = cloneBoard(current.board);
@@ -876,7 +1376,7 @@ export default function LevelScreen() {
     }
 
     if (selectedBoardTool && isDirectSpecialPowerTool(selectedBoardTool)) {
-      activateDirectSpecialPower(selectedBoardTool, position);
+      await activateDirectSpecialPower(selectedBoardTool, position);
       return;
     }
 
@@ -905,7 +1405,6 @@ export default function LevelScreen() {
 
     setSelectedBoardTool(null);
     setBombDropAnimation(null);
-    setPendingBombClear(null);
     setHammerAnimation(null);
     setPendingHammerClear(null);
     setRecommendedMove(null);
@@ -951,11 +1450,11 @@ export default function LevelScreen() {
   }
 
   function handleDropAnimationComplete(key: number) {
-    setDropAnimation((current) => (current?.key === key ? null : current));
-    if (!activeTimeline) {
+    if (completeOverlappedDrop(key)) {
       return;
     }
-    if (completeOverlappedDrop(key)) {
+    setDropAnimation((current) => (current?.key === key ? null : current));
+    if (!activeTimeline && !activeTimelineRef.current) {
       return;
     }
     advanceTimeline('drop', key);
@@ -977,43 +1476,14 @@ export default function LevelScreen() {
   }
 
   function handleSpecialWipeComplete(key: number) {
+    directPowerStartTimes.current.delete(key);
     setSpecialWipeAnimation((current) => (current?.key === key && !current.previewOnly ? null : current));
-    if (!activeTimeline) {
-      return;
-    }
     advanceTimeline('special-wipe', key);
   }
 
-  function resolveBombClear(key: number) {
-    if (!pendingBombClear || pendingBombClear.key !== key) {
-      setBombDropAnimation((current) => (current?.key === key ? null : current));
-      return;
-    }
-
-    const refillSeed = level.seed + engineState.movesUsed * 101 + pendingBombClear.target.row * 17 + pendingBombClear.target.col * 31;
-    const cascadeRefillSeed =
-      level.seed + engineState.movesUsed * 101 + pendingBombClear.target.row * 19 + pendingBombClear.target.col * 37 + 256;
-    const sequence = resolveBombClearSequence({
-      key,
-      target: pendingBombClear.target,
-      board: pendingBombClear.board,
-      engineState,
-      refill: createSeededRefill({ seed: refillSeed, fruitTypes: level.fruitTypes }),
-      cascadeRefill: createSeededRefill({ seed: cascadeRefillSeed, fruitTypes: level.fruitTypes }),
-      reshuffle: (board: Board) => createBoard({ seed: level.seed + engineState.movesUsed + 299 }),
-    });
-
-    unstable_batchedUpdates(() => {
-      setBombDropAnimation(null);
-      setPendingBombClear(null);
-      setActiveTimeline(null);
-      activeTimelineCompletion.current = null;
-    });
-    startTimeline(
-      sequence.jobs,
-      sequence.state,
-    );
-    playMatchSound();
+  function handleBombClearComplete(key: number) {
+    setBombDropAnimation((current) => (current?.key === key ? null : current));
+    advanceTimeline('bomb-clear', key);
   }
 
   function resolveHammerClear(key: number) {
@@ -1035,11 +1505,12 @@ export default function LevelScreen() {
       reshuffle: (board: Board) => createBoard({ seed: level.seed + engineState.movesUsed + 299 }),
     });
 
-    unstable_batchedUpdates(() => {
+    runStateUpdates(() => {
       setHammerAnimation(null);
       setPendingHammerClear(null);
       setActiveTimeline(null);
       activeTimelineCompletion.current = null;
+      activeTimelineRef.current = null;
     });
     startTimeline(
       sequence.jobs,
@@ -1049,42 +1520,65 @@ export default function LevelScreen() {
   }
 
   const boardToolButtons: Array<{
-    id: BoardToolId;
+    id: VisibleBoardToolId;
     label: string;
     source: number;
-    disabled?: boolean;
+    disabled: boolean;
+    count: number;
   }> = [
     {
       id: 'bomb',
       label: 'Bomb booster',
       source: uiRuntimeAssets.gameplayBombButton,
       disabled: !canUseBombBooster,
-    },
-    {
-      id: 'hammer',
-      label: 'Hammer booster',
-      source: uiRuntimeAssets.gameplayHammerButton,
-      disabled: !canUseHammerBooster,
+      count: DEBUG_UNLIMITED_BOOSTERS ? DEBUG_UNLIMITED_BOOSTER_COUNT : progress.inventory.boosters.bomb,
     },
     {
       id: 'lineRocket',
       label: 'LineRocket',
       source: uiRuntimeAssets.gameplayLineRocketButton,
+      disabled: !canUseLineRocketBooster,
+      count: DEBUG_UNLIMITED_BOOSTERS ? DEBUG_UNLIMITED_BOOSTER_COUNT : progress.inventory.boosters.lineRocket,
     },
     {
       id: 'fruityCross',
       label: 'FruityCross',
       source: uiRuntimeAssets.gameplayFruityCrossButton,
+      disabled: !canUseFruityCrossBooster,
+      count: DEBUG_UNLIMITED_BOOSTERS ? DEBUG_UNLIMITED_BOOSTER_COUNT : progress.inventory.boosters.fruityCross,
     },
     {
       id: 'lightningFruits',
       label: 'LightningFruits',
       source: uiRuntimeAssets.gameplayLightningFruitsButton,
+      disabled: !canUseLightningFruitsBooster,
+      count: DEBUG_UNLIMITED_BOOSTERS ? DEBUG_UNLIMITED_BOOSTER_COUNT : progress.inventory.boosters.lightningFruits,
     },
   ];
+  const lightningScreenShakeX = lightningScreenShake.interpolate({
+    inputRange: [0, 0.02, 0.08, 0.16, 0.28, 0.42, 0.6, 0.78, 1],
+    outputRange: [0, -4, 5, -4, 4, -3, 2, -1, 0],
+    extrapolate: 'clamp',
+  });
+  const lightningScreenShakeY = lightningScreenShake.interpolate({
+    inputRange: [0, 0.025, 0.1, 0.2, 0.36, 0.54, 0.76, 1],
+    outputRange: [0, 2, -3, 2, -2, 1, -1, 0],
+    extrapolate: 'clamp',
+  });
+  const lightningScreenShakeScale = lightningScreenShake.interpolate({
+    inputRange: [0, 0.02, 0.78, 1],
+    outputRange: [1, 1.015, 1.015, 1],
+    extrapolate: 'clamp',
+  });
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.cream }}>
+      <Animated.View
+        style={{
+          flex: 1,
+          transform: [{ translateX: lightningScreenShakeX }, { translateY: lightningScreenShakeY }, { scale: lightningScreenShakeScale }],
+        }}
+      >
       <ImageBackground source={backgroundRuntimeAssets.gameplay} fadeDuration={0} resizeMode="cover" style={{ flex: 1 }}>
       <Pressable
         onPress={() => setShowSettingsOverlay(true)}
@@ -1304,6 +1798,7 @@ export default function LevelScreen() {
                 specialWipeAnimation={specialWipeAnimation}
                 bombDropAnimation={bombDropAnimation}
                 bombDropSource={uiRuntimeAssets.gameplayBombDrop}
+                bombExplosionSource={uiRuntimeAssets.gameplayBombExploded}
                 hammerAnimation={hammerAnimation}
                 hammerSource={uiRuntimeAssets.gameplayHammerButton}
                 hint={recommendedMove}
@@ -1321,7 +1816,7 @@ export default function LevelScreen() {
                 onReshuffleAnimationComplete={handleReshuffleAnimationComplete}
                 onSpecialMergeComplete={handleSpecialMergeComplete}
                 onSpecialWipeComplete={handleSpecialWipeComplete}
-                onBombDropAnimationComplete={resolveBombClear}
+                onBombDropAnimationComplete={handleBombClearComplete}
                 onHammerAnimationComplete={resolveHammerClear}
               />
               </View>
@@ -1338,7 +1833,7 @@ export default function LevelScreen() {
             >
               {boardToolButtons.map((tool) => {
                 const chosen = selectedBoardTool === tool.id;
-                const disabled = tool.disabled ?? false;
+                const disabled = tool.disabled;
 
                 return (
                   <Pressable
@@ -1350,7 +1845,8 @@ export default function LevelScreen() {
                         return;
                       }
                       if (disabled) {
-                        setSelectedBoardTool((current) => (current === tool.id ? null : current));
+                        setSelectedBoardTool(null);
+                        setSelected(null);
                         return;
                       }
                       setSelected(null);
@@ -1361,7 +1857,7 @@ export default function LevelScreen() {
                       width: boosters.buttonSize,
                       height: boosters.buttonSize,
                       borderRadius: boosters.buttonSize / 2,
-                      overflow: 'hidden',
+                      overflow: 'visible',
                       borderWidth: chosen ? 4 : 0,
                       borderColor: 'rgba(255, 248, 135, 0.95)',
                       opacity: disabled ? 0.42 : pressed ? 0.86 : 1,
@@ -1374,6 +1870,7 @@ export default function LevelScreen() {
                       resizeMode="contain"
                       style={{ width: '100%', height: '100%' }}
                     />
+                    <BoosterCountLabel count={tool.count} />
                   </Pressable>
                 );
               })}
@@ -1382,6 +1879,7 @@ export default function LevelScreen() {
         </View>
       </View>
       </ImageBackground>
+      </Animated.View>
 
       <Modal animationType="fade" transparent visible={paused}>
         <View
@@ -1416,133 +1914,14 @@ export default function LevelScreen() {
         </View>
       </Modal>
 
-      <Modal animationType="fade" transparent visible={showSettingsOverlay}>
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            padding: spacing.lg,
-          }}
-        >
-          <View
-            style={{
-              width: settingsOverlay.width,
-              height: settingsOverlay.height,
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}
-          >
-            <Image
-              source={gameplaySettingsScreenImage}
-              fadeDuration={0}
-              resizeMode="contain"
-              style={{
-                width: '100%',
-                height: '100%',
-              }}
-            />
-            <View
-              style={{
-                position: 'absolute',
-                left: 0,
-                right: 0,
-                top: 0,
-                bottom: 0,
-                justifyContent: 'center',
-                alignItems: 'center',
-              }}
-            >
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: settingsOverlay.menuButtonGap,
-                }}
-              >
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Go home"
-                  onPress={() => {
-                    setShowSettingsOverlay(false);
-                    screenWipe.replace('/chapters');
-                  }}
-                  onPressIn={() => animateSettingsMenu(settingsHomeScale, 0.92)}
-                  onPressOut={() => animateSettingsMenu(settingsHomeScale, 1)}
-                  style={{
-                    width: settingsOverlay.menuButtonWidth,
-                    height: settingsOverlay.menuButtonHeight,
-                  }}
-                >
-                  <Animated.Image
-                    source={uiRuntimeAssets.gameplayHomeButton}
-                    fadeDuration={0}
-                    resizeMode="contain"
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      transform: [{ scale: settingsHomeScale }],
-                    }}
-                  />
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Go to map"
-                  onPress={() => {
-                    setShowSettingsOverlay(false);
-                    screenWipe.replace('/map');
-                  }}
-                  onPressIn={() => animateSettingsMenu(settingsMapScale, 0.92)}
-                  onPressOut={() => animateSettingsMenu(settingsMapScale, 1)}
-                  style={{
-                    width: settingsOverlay.menuButtonWidth,
-                    height: settingsOverlay.menuButtonHeight,
-                  }}
-                >
-                  <Animated.Image
-                    source={uiRuntimeAssets.gameplayMapButton}
-                    fadeDuration={0}
-                    resizeMode="contain"
-                    style={{
-                      width: '100%',
-                      height: '100%',
-                      transform: [{ scale: settingsMapScale }],
-                    }}
-                  />
-                </Pressable>
-              </View>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Close settings"
-              onPress={() => setShowSettingsOverlay(false)}
-              onPressIn={() => animateSettingsExit(0.92)}
-              onPressOut={() => animateSettingsExit(1)}
-              style={{
-                position: 'absolute',
-                top: settingsOverlay.exitButtonTop,
-                right: settingsOverlay.exitButtonRight,
-                width: settingsOverlay.exitButtonSize,
-                height: settingsOverlay.exitButtonSize,
-                zIndex: 2,
-              }}
-            >
-              <Animated.Image
-                source={gameplaySettingsExitImage}
-                fadeDuration={0}
-                resizeMode="contain"
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  transform: [{ scale: settingsExitScale }],
-                }}
-              />
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
+      <SettingsOverlay
+        visible={showSettingsOverlay}
+        onClose={() => setShowSettingsOverlay(false)}
+        onGoHome={() => {
+          setShowSettingsOverlay(false);
+          screenWipe.replace('/map');
+        }}
+      />
     </View>
   );
 }

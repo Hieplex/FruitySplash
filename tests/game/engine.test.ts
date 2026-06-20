@@ -543,7 +543,7 @@ describe('engine', () => {
     expect(result.board.map((row) => getCellFruit(row[0]))).toEqual([4, 0, 1, 4, 0, 1, 1, 2]);
   });
 
-  it('when both swapped cells are special, it activates only the special that ends on swap.to', () => {
+  it('when both swapped cells are special, the root clear chains into the other special when reached', () => {
     const board = createBoardFromRows([
       [0, 1, 2, 3, 4, 0],
       [1, 2, 3, 4, 0, 1],
@@ -567,17 +567,86 @@ describe('engine', () => {
       powerTier: 4,
     };
 
+    const timeline: Parameters<NonNullable<Parameters<typeof resolveSwap>[2]['onTimelineEvent']>>[0][] = [];
+
     const result = resolveSwap(
       { board, score: 0, movesUsed: 0 },
       { from: { row: 3, col: 2 }, to: { row: 3, col: 3 } },
-      { refill: createQueueRefill([4, 0, 1, 2, 3, 4]) },
+      {
+        refill: createQueueRefill(Array.from({ length: 80 }, (_, index) => (index % 4) + 1)),
+        onTimelineEvent: (event) => {
+          timeline.push(event);
+        },
+      },
     );
+    const specialWipes = timeline.filter((event) => event.type === 'special-wipe');
 
     expect(result.accepted).toBe(true);
-    expect(result.cascadeCount).toBe(0);
-    expect(result.clearedCells).toBe(6);
-    expect(result.board[3].map(getCellFruit)).toEqual([2, 3, 4, 0, 1, 2]);
-    expect(result.board.map((row) => getCellFruit(row[2]))).not.toEqual([4, 0, 1, 2, 3, 4, 0, 1]);
+    expect(result.clearedCells).toBeGreaterThanOrEqual(13);
+    expect(specialWipes).toHaveLength(2);
+    expect(specialWipes[0]).toMatchObject({
+      origin: { row: 3, col: 3 },
+      kind: 'row-wipe',
+      triggerDelayMs: 0,
+    });
+    expect(specialWipes[1]).toMatchObject({
+      origin: { row: 3, col: 2 },
+      kind: 'cross-wipe',
+      triggeredBy: { row: 3, col: 3 },
+      triggerDelayMs: 90,
+    });
+  });
+
+  it('chains specials hit by a directly swapped special clear', () => {
+    const board = createBoardFromRows([
+      [0, 1, 2, 3, 4, 0],
+      [1, 2, 3, 4, 0, 1],
+      [2, 3, 4, 0, 1, 2],
+      [3, 4, 0, 1, 2, 3],
+      [4, 0, 1, 2, 3, 4],
+      [0, 1, 2, 3, 4, 0],
+      [1, 2, 3, 4, 0, 1],
+      [2, 3, 4, 0, 1, 2],
+    ]);
+    board[3][2] = {
+      type: 'special',
+      fruit: 0,
+      kind: 'row-wipe',
+      powerTier: 4,
+    };
+    board[3][5] = {
+      type: 'special',
+      fruit: 3,
+      kind: 'cross-wipe',
+      powerTier: 5,
+    };
+    const timeline: Parameters<NonNullable<Parameters<typeof resolveSwap>[2]['onTimelineEvent']>>[0][] = [];
+
+    const result = resolveSwap(
+      { board, score: 0, movesUsed: 0 },
+      { from: { row: 3, col: 2 }, to: { row: 3, col: 3 } },
+      {
+        refill: createQueueRefill(Array.from({ length: 60 }, (_, index) => (index % 4) + 1)),
+        onTimelineEvent: (event) => {
+          timeline.push(event);
+        },
+      },
+    );
+    const specialWipes = timeline.filter((event) => event.type === 'special-wipe');
+
+    expect(result.accepted).toBe(true);
+    expect(specialWipes).toHaveLength(2);
+    expect(specialWipes[0]).toMatchObject({
+      origin: { row: 3, col: 3 },
+      kind: 'row-wipe',
+      triggerDelayMs: 0,
+    });
+    expect(specialWipes[1]).toMatchObject({
+      origin: { row: 3, col: 5 },
+      kind: 'cross-wipe',
+      triggeredBy: { row: 3, col: 3 },
+      triggerDelayMs: 180,
+    });
   });
 
   it('keeps match 3 resolution unchanged without creating special cells', () => {
@@ -1088,6 +1157,189 @@ describe('engine', () => {
           spawned: false,
         },
       ],
+    });
+  });
+
+  it.each([
+    {
+      kind: 'row-wipe' as const,
+      powerTier: 4 as const,
+      expectedCells: [
+        { row: 3, col: 1 },
+        { row: 3, col: 0 },
+        { row: 3, col: 2 },
+        { row: 3, col: 3 },
+        { row: 3, col: 4 },
+        { row: 3, col: 5 },
+      ],
+    },
+    {
+      kind: 'column-wipe' as const,
+      powerTier: 4 as const,
+      expectedCells: [
+        { row: 3, col: 1 },
+        { row: 0, col: 1 },
+        { row: 1, col: 1 },
+        { row: 2, col: 1 },
+        { row: 4, col: 1 },
+        { row: 5, col: 1 },
+        { row: 6, col: 1 },
+        { row: 7, col: 1 },
+      ],
+    },
+    {
+      kind: 'cross-wipe' as const,
+      powerTier: 5 as const,
+      expectedCells: [
+        { row: 3, col: 1 },
+        { row: 3, col: 0 },
+        { row: 3, col: 2 },
+        { row: 3, col: 3 },
+        { row: 3, col: 4 },
+        { row: 3, col: 5 },
+        { row: 0, col: 1 },
+        { row: 1, col: 1 },
+        { row: 2, col: 1 },
+        { row: 4, col: 1 },
+        { row: 5, col: 1 },
+        { row: 6, col: 1 },
+        { row: 7, col: 1 },
+      ],
+    },
+    {
+      kind: 'color-clear' as const,
+      powerTier: 7 as const,
+      expectedCells: [
+        { row: 3, col: 1 },
+        { row: 0, col: 0 },
+        { row: 0, col: 5 },
+        { row: 1, col: 4 },
+        { row: 2, col: 3 },
+        { row: 3, col: 2 },
+        { row: 3, col: 3 },
+        { row: 4, col: 1 },
+        { row: 5, col: 0 },
+        { row: 5, col: 5 },
+        { row: 6, col: 4 },
+        { row: 7, col: 3 },
+      ],
+    },
+  ])('activates an existing $kind special when it participates in a regular match', ({ kind, powerTier, expectedCells }) => {
+    const board = createBoardFromRows([
+      [0, 1, 2, 3, 4, 0],
+      [1, 2, 3, 4, 0, 1],
+      [2, 3, 4, 0, 1, 2],
+      [4, 0, 0, 0, 2, 3],
+      [4, 0, 1, 2, 3, 4],
+      [0, 1, 2, 3, 4, 0],
+      [1, 2, 3, 4, 0, 1],
+      [2, 3, 4, 0, 1, 2],
+    ]);
+    board[3][1] = {
+      type: 'special',
+      fruit: 0,
+      kind,
+      powerTier,
+    };
+    const timeline: Parameters<NonNullable<Parameters<typeof resolveBoardMatches>[1]['onTimelineEvent']>>[0][] = [];
+
+    resolveBoardMatches(
+      { board, score: 0, movesUsed: 0 },
+      {
+        refill: createQueueRefill(Array.from({ length: 40 }, (_, index) => (index % 4) + 1)),
+        onTimelineEvent: (event) => {
+          timeline.push(event);
+        },
+      },
+    );
+
+    expect(timeline[0]).toMatchObject({
+      type: 'clear',
+      chain: 1,
+      clearedCells: [
+        { row: 3, col: 1 },
+        { row: 3, col: 2 },
+        { row: 3, col: 3 },
+      ],
+    });
+    expect(timeline[1]).toMatchObject({
+      type: 'special-wipe',
+      chain: 1,
+      cause: 'cascade',
+      origin: { row: 3, col: 1 },
+      kind,
+      cells: expectedCells,
+    });
+  });
+
+  it('chains every special hit by an active row clear at the moment the clear reaches it', () => {
+    const board = createBoardFromRows([
+      [0, 1, 2, 3, 4, 0],
+      [1, 2, 3, 4, 0, 1],
+      [2, 3, 4, 0, 1, 2],
+      [4, 0, 0, 0, 2, 3],
+      [4, 0, 1, 2, 3, 4],
+      [0, 1, 2, 3, 4, 0],
+      [1, 2, 3, 4, 0, 1],
+      [2, 3, 4, 0, 1, 2],
+    ]);
+    board[3][1] = {
+      type: 'special',
+      fruit: 0,
+      kind: 'row-wipe',
+      powerTier: 4,
+    };
+    board[3][4] = {
+      type: 'special',
+      fruit: 2,
+      kind: 'cross-wipe',
+      powerTier: 5,
+    };
+    board[3][5] = {
+      type: 'special',
+      fruit: 3,
+      kind: 'color-clear',
+      powerTier: 7,
+    };
+    const timeline: Parameters<NonNullable<Parameters<typeof resolveBoardMatches>[1]['onTimelineEvent']>>[0][] = [];
+
+    resolveBoardMatches(
+      { board, score: 0, movesUsed: 0 },
+      {
+        refill: createQueueRefill(Array.from({ length: 80 }, (_, index) => (index % 4) + 1)),
+        onTimelineEvent: (event) => {
+          timeline.push(event);
+        },
+      },
+    );
+
+    const specialWipes = timeline.filter((event) => event.type === 'special-wipe');
+
+    expect(specialWipes).toHaveLength(3);
+    expect(specialWipes[0]).toMatchObject({
+      origin: { row: 3, col: 1 },
+      kind: 'row-wipe',
+      triggerDelayMs: 0,
+      cells: [
+        { row: 3, col: 1 },
+        { row: 3, col: 0 },
+        { row: 3, col: 2 },
+        { row: 3, col: 3 },
+        { row: 3, col: 4 },
+        { row: 3, col: 5 },
+      ],
+    });
+    expect(specialWipes[1]).toMatchObject({
+      origin: { row: 3, col: 4 },
+      kind: 'cross-wipe',
+      triggeredBy: { row: 3, col: 1 },
+      triggerDelayMs: 270,
+    });
+    expect(specialWipes[2]).toMatchObject({
+      origin: { row: 3, col: 5 },
+      kind: 'color-clear',
+      triggeredBy: { row: 3, col: 1 },
+      triggerDelayMs: 360,
     });
   });
 
